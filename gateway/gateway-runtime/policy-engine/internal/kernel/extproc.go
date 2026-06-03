@@ -39,6 +39,8 @@ import (
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	policy "github.com/wso2/api-platform/sdk/core/policy/v1alpha2"
+
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/config"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/constants"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/executor"
@@ -163,15 +165,22 @@ func (s *ExternalProcessorServer) handleProcessingPhase(ctx context.Context, req
 			slog.ErrorContext(ctx, "Policy chain not found for route, returning 500",
 				"route", rm.RouteName,
 				"api_name", rm.APIName)
+			// TODO: (renuka) handle error codes in a separate issue: https://github.com/wso2/api-platform/issues/1637
+			errResp := policy.ImmediateResponse{
+				StatusCode: int(typev3.StatusCode_InternalServerError),
+				Headers:    map[string]string{"content-type": "application/json"},
+				Body:       []byte(`{"error":"Internal Server Error"}`),
+			}
+			// SOAP clients expect a SOAP Fault, not JSON.
+			if rm.APIKind == apiKindSoapApi {
+				errResp = soapFaultImmediateResponse(errResp, soapVersionFromContentType(rawRequestContentType(req)))
+			}
 			return &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{
-						Status: &typev3.HttpStatus{Code: typev3.StatusCode_InternalServerError},
-						Headers: buildHeaderValueOptions(map[string]string{
-							"content-type": "application/json",
-						}),
-						// TODO: (renuka) handle error codes in a separate issue: https://github.com/wso2/api-platform/issues/1637
-						Body: []byte(`{"error":"Internal Server Error"}`),
+						Status:  &typev3.HttpStatus{Code: typev3.StatusCode(errResp.StatusCode)},
+						Headers: buildHeaderValueOptions(errResp.Headers),
+						Body:    errResp.Body,
 					},
 				},
 			}, nil

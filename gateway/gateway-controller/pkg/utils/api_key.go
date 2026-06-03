@@ -367,6 +367,12 @@ func extractConfigDisplayNameVersion(kind string, configuration any) (string, st
 			return "", "", fmt.Errorf("configuration is not a RestAPI (kind: %s)", kind)
 		}
 		return restCfg.Spec.DisplayName, restCfg.Spec.Version, nil
+	case models.KindSoapApi:
+		soapCfg, ok := configuration.(api.SoapAPI)
+		if !ok {
+			return "", "", fmt.Errorf("configuration is not a SoapAPI (kind: %s)", kind)
+		}
+		return soapCfg.Spec.DisplayName, soapCfg.Spec.Version, nil
 	case models.KindLlmProxy:
 		proxyCfg, ok := configuration.(api.LLMProxyConfiguration)
 		if !ok {

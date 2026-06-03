@@ -27,12 +27,13 @@ import (
 // Registry dispatches StoredConfig → RuntimeDeployConfig by API kind.
 type Registry struct {
 	restT *RestAPITransformer
+	soapT *SoapAPITransformer
 	llmT  *LLMTransformer
 }
 
 // NewRegistry creates a new transformer Registry.
-func NewRegistry(restT *RestAPITransformer, llmT *LLMTransformer) *Registry {
-	return &Registry{restT: restT, llmT: llmT}
+func NewRegistry(restT *RestAPITransformer, soapT *SoapAPITransformer, llmT *LLMTransformer) *Registry {
+	return &Registry{restT: restT, soapT: soapT, llmT: llmT}
 }
 
 // Transform converts a StoredConfig to a RuntimeDeployConfig using the appropriate transformer.
@@ -40,6 +41,8 @@ func (r *Registry) Transform(cfg *models.StoredConfig) (*models.RuntimeDeployCon
 	switch cfg.Kind {
 	case "RestApi", "WebSubApi", "Mcp":
 		return r.restT.Transform(cfg)
+	case "SoapApi":
+		return r.soapT.Transform(cfg)
 	case "LlmProvider", "LlmProxy":
 		return r.llmT.Transform(cfg)
 	default:

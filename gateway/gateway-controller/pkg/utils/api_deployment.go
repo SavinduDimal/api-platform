@@ -220,8 +220,17 @@ func (s *APIDeploymentService) DeployAPIConfiguration(params APIDeploymentParams
 		kind = string(restConfig.Kind)
 		parsedConfig = restConfig
 		annotationArtifactID = annotationValue(restConfig.Metadata.Annotations, commonconstants.AnnotationArtifactID)
+	case "SoapApi":
+		var soapConfig api.SoapAPI
+		if err := s.parser.Parse(params.Data, params.ContentType, &soapConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse configuration: %w", err)
+		}
+		handle = soapConfig.Metadata.Name
+		kind = string(soapConfig.Kind)
+		parsedConfig = soapConfig
+		annotationArtifactID = annotationValue(soapConfig.Metadata.Annotations, commonconstants.AnnotationArtifactID)
 	default:
-		return nil, fmt.Errorf("unsupported resource kind %q: must be \"RestApi\", \"WebSubApi\", or \"WebBrokerApi\"", resolvedKind)
+		return nil, fmt.Errorf("unsupported resource kind %q: must be \"RestApi\", \"WebSubApi\", \"WebBrokerApi\", or \"SoapApi\"", resolvedKind)
 	}
 
 	// Resolve API ID: explicit param > artifact-id annotation > auto-generate
@@ -318,6 +327,14 @@ func (s *APIDeploymentService) DeployAPIConfiguration(params APIDeploymentParams
 		// 	return nil, &ValidationErrorListError{Errors: validationErrors}
 		// }
 	case api.RestAPI:
+		apiName = c.Spec.DisplayName
+		apiVersion = c.Spec.Version
+		validationErrors := s.validator.Validate(&c)
+		if len(validationErrors) > 0 {
+			s.logValidationErrors(params.Logger, apiID, apiName, validationErrors)
+			return nil, &ValidationErrorListError{Errors: validationErrors}
+		}
+	case api.SoapAPI:
 		apiName = c.Spec.DisplayName
 		apiVersion = c.Spec.Version
 		validationErrors := s.validator.Validate(&c)

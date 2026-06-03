@@ -387,8 +387,9 @@ func main() {
 	// Build transformer registry for StoredConfig → RuntimeDeployConfig conversion
 	policyVersionResolver := utils.NewLoadedPolicyVersionResolver(policyDefinitions)
 	restTransformer := transform.NewRestAPITransformer(&cfg.Router, cfg, policyDefinitions)
+	soapTransformer := transform.NewSoapAPITransformer(&cfg.Router, cfg, policyDefinitions)
 	llmTransformer := transform.NewLLMTransformer(configStore, db, &cfg.Router, cfg, policyDefinitions, policyVersionResolver)
-	transformerRegistry := transform.NewRegistry(restTransformer, llmTransformer)
+	transformerRegistry := transform.NewRegistry(restTransformer, soapTransformer, llmTransformer)
 	policyManager.SetTransformers(transformerRegistry)
 
 	// Load runtime configs from existing API configurations on startup.
@@ -754,6 +755,12 @@ func generateAuthConfig(config *config.Config) commonmodels.AuthConfig {
 		"PUT /rest-apis/:id":    {"admin", "developer"},
 		"DELETE /rest-apis/:id": {"admin", "developer"},
 
+		"POST /soap-apis":       {"admin", "developer"},
+		"GET /soap-apis":        {"admin", "developer"},
+		"GET /soap-apis/:id":    {"admin", "developer"},
+		"PUT /soap-apis/:id":    {"admin", "developer"},
+		"DELETE /soap-apis/:id": {"admin", "developer"},
+
 		"POST /websub-apis":       {"admin", "developer"},
 		"GET /websub-apis":        {"admin", "developer"},
 		"GET /websub-apis/:id":    {"admin", "developer"},
@@ -801,6 +808,12 @@ func generateAuthConfig(config *config.Config) commonmodels.AuthConfig {
 		"PUT /rest-apis/:id/api-keys/:apiKeyName":             {"admin", "consumer"},
 		"POST /rest-apis/:id/api-keys/:apiKeyName/regenerate": {"admin", "consumer"},
 		"DELETE /rest-apis/:id/api-keys/:apiKeyName":          {"admin", "consumer"},
+
+		"POST /soap-apis/:id/api-keys":                        {"admin", "consumer"},
+		"GET /soap-apis/:id/api-keys":                         {"admin", "consumer"},
+		"PUT /soap-apis/:id/api-keys/:apiKeyName":             {"admin", "consumer"},
+		"POST /soap-apis/:id/api-keys/:apiKeyName/regenerate": {"admin", "consumer"},
+		"DELETE /soap-apis/:id/api-keys/:apiKeyName":          {"admin", "consumer"},
 
 		"POST /llm-providers/:id/api-keys":                        {"admin", "consumer"},
 		"GET /llm-providers/:id/api-keys":                         {"admin", "consumer"},

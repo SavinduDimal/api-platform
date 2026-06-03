@@ -73,11 +73,18 @@ func (v *APIValidator) Validate(config interface{}) []ValidationError {
 		return v.validateWebSubAPIConfiguration(cfg)
 	case api.WebSubAPI:
 		return v.validateWebSubAPIConfiguration(&cfg)
+	case *api.SoapAPI:
+		if cfg == nil {
+			return []ValidationError{{Field: "config", Message: "SoapAPI configuration is nil"}}
+		}
+		return v.validateSoapAPIConfiguration(cfg)
+	case api.SoapAPI:
+		return v.validateSoapAPIConfiguration(&cfg)
 	default:
 		return []ValidationError{
 			{
 				Field:   "config",
-				Message: "Unsupported configuration type for APIValidator (expected RestAPI or WebSubAPI)",
+				Message: "Unsupported configuration type for APIValidator (expected RestAPI, WebSubAPI, or SoapAPI)",
 			},
 		}
 	}
@@ -539,6 +546,15 @@ func (v *APIValidator) validateContext(context string) []ValidationError {
 		})
 	}
 
+	// '|' is the segment separator of internal route names (METHOD|PATH|VHOST...);
+	// allowing it in the context would corrupt route-name parsing (vhost grouping).
+	if strings.Contains(context, "|") {
+		errors = append(errors, ValidationError{
+			Field:   "spec.context",
+			Message: "Context must not contain the '|' character",
+		})
+	}
+
 	return errors
 }
 
@@ -598,6 +614,15 @@ func (v *APIValidator) validateOperations(operations []api.Operation) []Validati
 			})
 		}
 
+		// '|' is the segment separator of internal route names (METHOD|PATH|VHOST...);
+		// allowing it in a path would corrupt route-name parsing (vhost grouping).
+		if strings.Contains(op.Path, "|") {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("spec.operations[%d].path", i),
+				Message: "Operation path must not contain the '|' character",
+			})
+		}
+
 		// Validate path parameters have balanced braces
 		if !v.validatePathParameters(op.Path) {
 			errors = append(errors, ValidationError{
@@ -615,4 +640,64 @@ func (v *APIValidator) validatePathParameters(path string) bool {
 	openCount := strings.Count(path, "{")
 	closeCount := strings.Count(path, "}")
 	return openCount == closeCount
+}
+
+// validateSoapAPIConfiguration validates a SOAP API configuration.
+func (v *APIValidator) validateSoapAPIConfiguration(config *api.SoapAPI) []ValidationError {
+	var errors []ValidationError
+
+	if config.Kind != api.SoapAPIKindSoapApi {
+		errors = append(errors, ValidationError{
+			Field:   "kind",
+			Message: "Unsupported kind (must be 'SoapApi')",
+		})
+	}
+
+	if config.ApiVersion != api.SoapAPIApiVersionGatewayApiPlatformWso2Comv1alpha1 {
+		errors = append(errors, ValidationError{
+			Field:   "apiVersion",
+			Message: "Unsupported API version (must be 'gateway.api-platform.wso2.com/v1alpha1')",
+		})
+	}
+
+	errors = append(errors, v.validateSoapData(&config.Spec)...)
+
+	if v.policyValidator != nil {
+		errors = append(errors, v.policyValidator.ValidateSoapAPIPolicies(config)...)
+	}
+
+	errors = append(errors, ValidateMetadata(&config.Metadata)...)
+
+	return errors
+}
+
+// validateSoapData validates the spec of a SOAP API.
+func (v *APIValidator) validateSoapData(spec *api.SoapAPIData) []ValidationError {
+	var errors []ValidationError
+
+	if spec.DisplayName == "" {
+		errors = append(errors, ValidationError{Field: "spec.displayName", Message: "API display name is required"})
+	} else if len(spec.DisplayName) > 100 {
+		errors = append(errors, ValidationError{Field: "spec.displayName", Message: "API display name must be 1-100 characters"})
+	} else if !v.urlFriendlyNameRegex.MatchString(spec.DisplayName) {
+		errors = append(errors, ValidationError{
+			Field:   "spec.displayName",
+			Message: "API display name must be URL-friendly (only letters, numbers, spaces, hyphens, underscores, and dots allowed)",
+		})
+	}
+
+	if spec.Version == "" {
+		errors = append(errors, ValidationError{Field: "spec.version", Message: "API version is required"})
+	} else if !v.versionRegex.MatchString(spec.Version) {
+		errors = append(errors, ValidationError{Field: "spec.version", Message: "API version must follow semantic versioning pattern (e.g., v1.0, v2.1.3)"})
+	}
+
+	errors = append(errors, v.validateContext(spec.Context)...)
+
+	errors = append(errors, v.validateUpstream("main", &spec.Upstream.Main, nil)...)
+	if spec.Upstream.Sandbox != nil {
+		errors = append(errors, v.validateUpstream("sandbox", spec.Upstream.Sandbox, nil)...)
+	}
+
+	return errors
 }

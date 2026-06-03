@@ -299,6 +299,9 @@ func TestAPIValidator_ValidateContext(t *testing.T) {
 		{name: "Context with trailing slash", context: "/api/", wantError: true, errMsg: "cannot end with /"},
 		{name: "Root context allowed", context: "/", wantError: false},
 		{name: "Context too long", context: "/" + strings.Repeat("a", 201), wantError: true, errMsg: "1-200 characters"},
+		// '|' is the internal route-name segment separator (METHOD|PATH|VHOST...) —
+		// reject it so vhost grouping cannot be corrupted by user-supplied paths.
+		{name: "Context with pipe character", context: "/api|x", wantError: true, errMsg: "must not contain"},
 	}
 
 	for _, tt := range tests {
@@ -417,6 +420,16 @@ func TestAPIValidator_ValidateOperations(t *testing.T) {
 			},
 			wantError: true,
 			errField:  "spec.operations[0].method",
+		},
+		{
+			// '|' is the internal route-name segment separator — reject it so
+			// vhost grouping cannot be corrupted by user-supplied paths.
+			name: "Path with pipe character",
+			operations: []api.Operation{
+				{Method: api.OperationMethodGET, Path: "/items|x"},
+			},
+			wantError: true,
+			errField:  "spec.operations[0].path",
 		},
 		{
 			name: "Missing path",
@@ -704,3 +717,4 @@ func createValidWebSubAPIConfig() *api.WebSubAPI {
 		},
 	}
 }
+

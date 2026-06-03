@@ -14,6 +14,8 @@ func ExtractNameVersion(cfg any) (string, string, error) {
 	switch c := cfg.(type) {
 	case api.RestAPI:
 		return c.Spec.DisplayName, c.Spec.Version, nil
+	case api.SoapAPI:
+		return c.Spec.DisplayName, c.Spec.Version, nil
 	case api.WebSubAPI:
 		return c.Spec.DisplayName, c.Spec.Version, nil
 	default:

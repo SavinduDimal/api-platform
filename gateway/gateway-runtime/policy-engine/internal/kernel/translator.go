@@ -64,6 +64,7 @@ func translateRequestActionsCore(result *executor.RequestExecutionResult, execCt
 	// Check for short-circuit with immediate response
 	if result.ShortCircuited && result.FinalAction != nil {
 		if immResp, ok := result.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			// Preserve request-phase analytics metadata from policies executed before
 			// the short-circuit action so immediate responses still include it.
 			shortCircuitAnalyticsData := make(map[string]any)
@@ -359,6 +360,7 @@ func TranslateRequestHeaderActions(result *executor.RequestHeaderExecutionResult
 	// Check for short-circuit with immediate response
 	if result.ShortCircuited && result.FinalAction != nil {
 		if immResp, ok := result.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			response := &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{
@@ -520,6 +522,7 @@ func TranslateRequestHeaderActionsWithBodyMerge(
 	// when header policies did NOT short-circuit (see processRequestBodyForEmptyRequest).
 	if bodyResult.ShortCircuited && bodyResult.FinalAction != nil {
 		if immResp, ok := bodyResult.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			response := &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{
@@ -742,6 +745,7 @@ func TranslateResponseHeaderActions(result *executor.ResponseHeaderExecutionResu
 	// Check for short-circuit with immediate response
 	if result.ShortCircuited && result.FinalAction != nil {
 		if immResp, ok := result.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			response := &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{
@@ -843,6 +847,7 @@ func TranslateResponseHeaderActionsWithBodyMerge(
 	// when header policies did NOT short-circuit (see processResponseBodyForEmptyResponse).
 	if bodyResult.ShortCircuited && bodyResult.FinalAction != nil {
 		if immResp, ok := bodyResult.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			response := &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{
@@ -1081,6 +1086,7 @@ func translateResponseActionsCore(result *executor.ResponseExecutionResult, exec
 	// Check for short-circuit with immediate response
 	if result.ShortCircuited && result.FinalAction != nil {
 		if immResp, ok := result.FinalAction.(policy.ImmediateResponse); ok {
+			immResp = applySOAPFaultFormat(immResp, execCtx)
 			response := &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 					ImmediateResponse: &extprocv3.ImmediateResponse{

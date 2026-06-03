@@ -153,6 +153,13 @@ func GenerateRouteName(method, context, apiVersion, path, vhost string) string {
 	return fmt.Sprintf("%s|%s|%s", method, fullPath, vhost)
 }
 
+// soapWildcardPath is the operation path for SOAP routes. "/*" makes a SOAP API a single
+// wildcard resource under its context (one POST + one GET route), matching all traffic for
+// the service and proxying it to the backend without per-operation awareness. Both the
+// Envoy translator and the SOAP policy transformer use it so route names and policy-chain
+// keys stay aligned.
+const soapWildcardPath = "/*"
+
 // ConstructFullPath builds the full path by replacing $version placeholder in context and appending path
 // If context contains $version, it will be replaced with the actual apiVersion value
 // Example 1: context=/weather/$version, version=v1.0, path=/us/seattle -> /weather/v1.0/us/seattle
@@ -424,10 +431,12 @@ func (t *Translator) TranslateConfigs(
 			}
 		}
 
-		// Legacy path: direct translation from StoredConfig (WebSubApi, or fallback)
+		// Legacy path: direct translation from StoredConfig (WebSubApi, SoapApi, or fallback)
 		if routesList == nil {
 			if cfg.Kind == "WebSubApi" {
 				routesList, clusterList, err = t.translateAsyncAPIConfig(cfg, configs)
+			} else if cfg.Kind == models.KindSoapApi {
+				routesList, clusterList, err = t.translateSoapAPIConfig(cfg, configs)
 			} else {
 				routesList, clusterList, err = t.translateAPIConfig(cfg, configs)
 			}
@@ -915,6 +924,58 @@ func (t *Translator) translateAPIConfig(cfg *models.StoredConfig, allConfigs []*
 	}
 
 	return routesList, clusters, nil
+}
+
+// translateSoapAPIConfig translates a single SoapApi configuration into Envoy routes and clusters.
+//
+// Phase 1 (SOAP passthrough): a SOAP API exposes one service endpoint at the API context
+// path. This builds a single upstream cluster (the backend SOAP service) and two routes at
+// that context — POST for SOAP invocations and GET for ?wsdl/?xsd retrieval — both proxied
+// unchanged to the backend. The "/" operation path makes each route match the context exactly
+// (regex ^/ctx/?$), and the query string (?wsdl) is preserved on passthrough. Per-operation
+// SOAPAction routing is added in a later phase.
+func (t *Translator) translateSoapAPIConfig(cfg *models.StoredConfig, allConfigs []*models.StoredConfig) ([]*route.Route, []*cluster.Cluster, error) {
+	soapCfg, ok := cfg.Configuration.(api.SoapAPI)
+	if !ok {
+		return nil, nil, fmt.Errorf("configuration is not a SoapAPI")
+	}
+	apiData := soapCfg.Spec
+
+	clusters := []*cluster.Cluster{}
+
+	// Backend SOAP service cluster (main upstream).
+	mainClusterName, parsedMainURL, mainTimeout, err := t.resolveUpstreamCluster("main", &apiData.Upstream.Main, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var mainConnectTimeout *time.Duration
+	if mainTimeout != nil {
+		mainConnectTimeout = mainTimeout.Connect
+	}
+	clusters = append(clusters, t.createCluster(mainClusterName, parsedMainURL, nil, mainConnectTimeout))
+
+	// Effective vhost (fall back to the gateway default when not specified).
+	effectiveMainVHost := t.config.Router.VHosts.Main.Default
+	if apiData.Vhosts != nil && strings.TrimSpace(apiData.Vhosts.Main) != "" {
+		effectiveMainVHost = apiData.Vhosts.Main
+	}
+
+	apiProjectID := extractProjectIDFromConfig(cfg)
+
+	// A SOAP API is a single wildcard resource at the context: POST carries SOAP
+	// envelopes, GET serves ?wsdl/?xsd. The "/*" operation path makes createRoute match
+	// the whole subtree under the context and proxy it to the single backend, with no
+	// per-operation awareness. The query string (?wsdl) is preserved on passthrough.
+	routes := make([]*route.Route, 0, 2)
+	for _, method := range []string{"POST", "GET"} {
+		r := t.createRoute(cfg.UUID, apiData.DisplayName, apiData.Version, apiData.Context, method, soapWildcardPath,
+			mainClusterName, parsedMainURL.Path, effectiveMainVHost, cfg.Kind, "", "",
+			apiData.Upstream.Main.HostRewrite, apiProjectID, mainTimeout, false, "", nil)
+		routes = append(routes, r)
+	}
+
+	return routes, clusters, nil
 }
 
 // resolveUpstreamCluster validates an upstream (main or sandbox) and creates its cluster.
