@@ -262,3 +262,28 @@ func (pv *PolicyValidator) validatePolicyParams(params map[string]interface{}, s
 
 	return errors
 }
+
+// ValidateSoapAPIPolicies validates all policies in a SOAP API configuration.
+func (pv *PolicyValidator) ValidateSoapAPIPolicies(apiConfig *api.SoapAPI) []ValidationError {
+	var errors []ValidationError
+
+	if apiConfig.Spec.Policies != nil {
+		for i, policy := range *apiConfig.Spec.Policies {
+			errs := pv.validatePolicy(policy, fmt.Sprintf("spec.policies[%d]", i))
+			errors = append(errors, errs...)
+		}
+	}
+
+	if apiConfig.Spec.Operations != nil {
+		for opIdx, operation := range *apiConfig.Spec.Operations {
+			if operation.Policies != nil {
+				for pIdx, policy := range *operation.Policies {
+					errs := pv.validatePolicy(policy, fmt.Sprintf("spec.operations[%d].policies[%d]", opIdx, pIdx))
+					errors = append(errors, errs...)
+				}
+			}
+		}
+	}
+
+	return errors
+}

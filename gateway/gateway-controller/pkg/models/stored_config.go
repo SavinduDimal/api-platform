@@ -38,6 +38,7 @@ const (
 	KindMcp          ArtifactKind = "Mcp"
 	KindLlmProxy     ArtifactKind = "LlmProxy"
 	KindLlmProvider  ArtifactKind = "LlmProvider"
+	KindSoapApi      ArtifactKind = "SoapApi"
 )
 
 // DesiredState represents the intended deployment state of an API configuration.
@@ -132,15 +133,20 @@ func (c *StoredConfig) GetContext() (string, error) {
 			return strings.ReplaceAll(*sc.Spec.Context, "$version", c.Version), nil
 		}
 		return "", nil
+	case api.SoapAPI:
+		return strings.ReplaceAll(sc.Spec.Context, "$version", c.Version), nil
 	}
 	return "", fmt.Errorf("unsupported source configuration type: %T", c.SourceConfiguration)
 }
 
 func (c *StoredConfig) GetPolicies() *[]api.Policy {
-	if sc, ok := c.Configuration.(api.RestAPI); ok {
-		return sc.Spec.Policies
+	switch cfg := c.Configuration.(type) {
+	case api.RestAPI:
+		return cfg.Spec.Policies
+	case api.SoapAPI:
+		return cfg.Spec.Policies
+	// TODO: Add additional cases when other API types support policies
 	}
-	// TODO: enable when policies are supported for WebSubHub
 	return nil
 }
 
@@ -150,6 +156,8 @@ func (c *StoredConfig) GetMetadata() *api.Metadata {
 	case api.RestAPI:
 		return &cfg.Metadata
 	case api.WebSubAPI:
+		return &cfg.Metadata
+	case api.SoapAPI:
 		return &cfg.Metadata
 	}
 	return nil
@@ -162,6 +170,8 @@ func (c *StoredConfig) GetLabels() *map[string]string {
 		return cfg.Metadata.Labels
 	case api.WebSubAPI:
 		return cfg.Metadata.Labels
+	case api.SoapAPI:
+		return cfg.Metadata.Labels
 	}
 	return nil
 }
@@ -172,6 +182,8 @@ func (c *StoredConfig) GetAnnotations() *map[string]string {
 	case api.RestAPI:
 		return cfg.Metadata.Annotations
 	case api.WebSubAPI:
+		return cfg.Metadata.Annotations
+	case api.SoapAPI:
 		return cfg.Metadata.Annotations
 	}
 	return nil

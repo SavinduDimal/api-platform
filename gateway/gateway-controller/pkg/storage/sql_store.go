@@ -137,6 +137,8 @@ func kindToResourceTable(kind string) (string, error) {
 	switch kind {
 	case "RestApi":
 		return "rest_apis", nil
+	case "SoapApi":
+		return "soap_apis", nil
 	case "WebSubApi":
 		return "websub_apis", nil
 	case "WebBrokerApi":
@@ -161,6 +163,13 @@ func unmarshalSourceConfig(cfg *models.StoredConfig, jsonData string) error {
 	switch cfg.Kind {
 	case "RestApi":
 		var config api.RestAPI
+		if err := json.Unmarshal([]byte(jsonData), &config); err != nil {
+			return fmt.Errorf("failed to unmarshal configuration: %w", err)
+		}
+		cfg.SourceConfiguration = config
+		cfg.Configuration = config
+	case "SoapApi":
+		var config api.SoapAPI
 		if err := json.Unmarshal([]byte(jsonData), &config); err != nil {
 			return fmt.Errorf("failed to unmarshal configuration: %w", err)
 		}

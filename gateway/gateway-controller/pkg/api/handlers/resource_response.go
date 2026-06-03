@@ -68,6 +68,16 @@ func buildResourceResponse(cfg any, status api.ResourceStatus) any {
 		cp := *v
 		cp.Status = &status
 		return cp
+	case api.SoapAPI:
+		v.Status = &status
+		return v
+	case *api.SoapAPI:
+		if v == nil {
+			return nil
+		}
+		cp := *v
+		cp.Status = &status
+		return cp
 	case api.WebSubAPI:
 		v.Status = &status
 		return v

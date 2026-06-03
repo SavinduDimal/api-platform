@@ -395,6 +395,16 @@ func (t *Translator) TranslateConfigs(
 			continue
 		}
 
+		// SOAP APIs do not yet generate Envoy routes (Phase 1 Step 1 stores/serves
+		// the config; xDS route translation is added in Step 2). Skip cleanly so
+		// snapshot generation is not polluted with translation errors.
+		if cfg.Kind == models.KindSoapApi {
+			log.Debug("Skipping SoapApi in xDS translation (routing not yet implemented)",
+				slog.String("id", cfg.UUID),
+				slog.String("displayName", cfg.DisplayName))
+			continue
+		}
+
 		// Include all non-undeployed configs (both deployed and pending) in the snapshot.
 		// Undeployed configs are excluded so only active/pending APIs appear in xDS,
 		// while ensuring existing deployed APIs are not overridden when deploying new ones.
