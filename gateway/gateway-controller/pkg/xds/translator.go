@@ -395,16 +395,6 @@ func (t *Translator) TranslateConfigs(
 			continue
 		}
 
-		// SOAP APIs do not yet generate Envoy routes (Phase 1 Step 1 stores/serves
-		// the config; xDS route translation is added in Step 2). Skip cleanly so
-		// snapshot generation is not polluted with translation errors.
-		if cfg.Kind == models.KindSoapApi {
-			log.Debug("Skipping SoapApi in xDS translation (routing not yet implemented)",
-				slog.String("id", cfg.UUID),
-				slog.String("displayName", cfg.DisplayName))
-			continue
-		}
-
 		// Include all non-undeployed configs (both deployed and pending) in the snapshot.
 		// Undeployed configs are excluded so only active/pending APIs appear in xDS,
 		// while ensuring existing deployed APIs are not overridden when deploying new ones.
@@ -434,10 +424,12 @@ func (t *Translator) TranslateConfigs(
 			}
 		}
 
-		// Legacy path: direct translation from StoredConfig (WebSubApi, or fallback)
+		// Legacy path: direct translation from StoredConfig (WebSubApi, SoapApi, or fallback)
 		if routesList == nil {
 			if cfg.Kind == "WebSubApi" {
 				routesList, clusterList, err = t.translateAsyncAPIConfig(cfg, configs)
+			} else if cfg.Kind == models.KindSoapApi {
+				routesList, clusterList, err = t.translateSoapAPIConfig(cfg, configs)
 			} else {
 				routesList, clusterList, err = t.translateAPIConfig(cfg, configs)
 			}
@@ -925,6 +917,56 @@ func (t *Translator) translateAPIConfig(cfg *models.StoredConfig, allConfigs []*
 	}
 
 	return routesList, clusters, nil
+}
+
+// translateSoapAPIConfig translates a single SoapApi configuration into Envoy routes and clusters.
+//
+// Phase 1 (SOAP passthrough): a SOAP API exposes one service endpoint at the API context
+// path. This builds a single upstream cluster (the backend SOAP service) and two routes at
+// that context — POST for SOAP invocations and GET for ?wsdl/?xsd retrieval — both proxied
+// unchanged to the backend. The "/" operation path makes each route match the context exactly
+// (regex ^/ctx/?$), and the query string (?wsdl) is preserved on passthrough. Per-operation
+// SOAPAction routing is added in a later phase.
+func (t *Translator) translateSoapAPIConfig(cfg *models.StoredConfig, allConfigs []*models.StoredConfig) ([]*route.Route, []*cluster.Cluster, error) {
+	soapCfg, ok := cfg.Configuration.(api.SoapAPI)
+	if !ok {
+		return nil, nil, fmt.Errorf("configuration is not a SoapAPI")
+	}
+	apiData := soapCfg.Spec
+
+	clusters := []*cluster.Cluster{}
+
+	// Backend SOAP service cluster (main upstream).
+	mainClusterName, parsedMainURL, mainTimeout, err := t.resolveUpstreamCluster("main", &apiData.Upstream.Main, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var mainConnectTimeout *time.Duration
+	if mainTimeout != nil {
+		mainConnectTimeout = mainTimeout.Connect
+	}
+	clusters = append(clusters, t.createCluster(mainClusterName, parsedMainURL, nil, mainConnectTimeout))
+
+	// Effective vhost (fall back to the gateway default when not specified).
+	effectiveMainVHost := t.config.Router.VHosts.Main.Default
+	if apiData.Vhosts != nil && apiData.Vhosts.Main != nil && strings.TrimSpace(*apiData.Vhosts.Main) != "" {
+		effectiveMainVHost = *apiData.Vhosts.Main
+	}
+
+	apiProjectID := extractProjectIDFromConfig(cfg)
+
+	// One route per accepted HTTP method at the service endpoint. Operation path "/" makes
+	// createRoute match the context exactly and rewrite to the backend upstream path.
+	routes := make([]*route.Route, 0, 2)
+	for _, method := range []string{"POST", "GET"} {
+		r := t.createRoute(cfg.UUID, apiData.DisplayName, apiData.Version, apiData.Context, method, "/",
+			mainClusterName, parsedMainURL.Path, effectiveMainVHost, cfg.Kind, "", "",
+			apiData.Upstream.Main.HostRewrite, apiProjectID, mainTimeout, false, "", nil)
+		routes = append(routes, r)
+	}
+
+	return routes, clusters, nil
 }
 
 // resolveUpstreamCluster validates an upstream (main or sandbox) and creates its cluster.

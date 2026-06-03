@@ -387,8 +387,9 @@ func main() {
 	// Build transformer registry for StoredConfig → RuntimeDeployConfig conversion
 	policyVersionResolver := utils.NewLoadedPolicyVersionResolver(policyDefinitions)
 	restTransformer := transform.NewRestAPITransformer(&cfg.Router, cfg, policyDefinitions)
+	soapTransformer := transform.NewSoapAPITransformer(&cfg.Router, cfg, policyDefinitions)
 	llmTransformer := transform.NewLLMTransformer(configStore, db, &cfg.Router, cfg, policyDefinitions, policyVersionResolver)
-	transformerRegistry := transform.NewRegistry(restTransformer, llmTransformer)
+	transformerRegistry := transform.NewRegistry(restTransformer, soapTransformer, llmTransformer)
 	policyManager.SetTransformers(transformerRegistry)
 
 	// Load runtime configs from existing API configurations on startup.
