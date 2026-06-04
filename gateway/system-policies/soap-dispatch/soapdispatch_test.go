@@ -78,6 +78,11 @@ func TestOnRequestHeaders_SoapActionHeader(t *testing.T) {
 	if got := ctx.SharedContext.Metadata[MetadataKeySoapAction]; got != "urn:Add" {
 		t.Fatalf("expected raw action 'urn:Add', got %v", got)
 	}
+	// The standard operation dimension (analytics x-wso2-operation-path, tracing)
+	// must reflect the resolved SOAP operation.
+	if ctx.SharedContext.OperationPath != "Add" {
+		t.Fatalf("expected SharedContext.OperationPath 'Add', got %q", ctx.SharedContext.OperationPath)
+	}
 }
 
 func TestOnRequestHeaders_ContentTypeActionParam(t *testing.T) {
@@ -113,6 +118,9 @@ func TestOnRequestBody_ResolvesFromBodyQName(t *testing.T) {
 	// AddRequest is declared (matched by name) → logical name AddRequest.
 	if got := ctx.SharedContext.Metadata[MetadataKeySoapOperation]; got != "AddRequest" {
 		t.Fatalf("expected operation 'AddRequest' from body QName, got %v", got)
+	}
+	if ctx.SharedContext.OperationPath != "AddRequest" {
+		t.Fatalf("expected OperationPath 'AddRequest', got %q", ctx.SharedContext.OperationPath)
 	}
 }
 

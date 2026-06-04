@@ -101,7 +101,10 @@ func (p *SoapDispatchPolicy) OnRequestHeaders(_ context.Context, reqCtx *policy.
 	publishOperation(reqCtx.SharedContext, operation, action)
 
 	return policy.UpstreamRequestHeaderModifications{
-		AnalyticsMetadata: map[string]any{MetadataKeySoapOperation: operation},
+		AnalyticsMetadata: map[string]any{
+			MetadataKeySoapOperation: operation,
+			MetadataKeySoapAction:    action,
+		},
 	}
 }
 
@@ -149,13 +152,20 @@ func (p *SoapDispatchPolicy) OnRequestBody(_ context.Context, reqCtx *policy.Req
 // publishOperation writes the resolved operation into the shared context so later
 // policies in the chain (and later phases) can read it.
 func publishOperation(shared *policy.SharedContext, operation, action string) {
-	if shared == nil || shared.Metadata == nil || operation == "" {
+	if shared == nil || operation == "" {
 		return
 	}
-	shared.Metadata[MetadataKeySoapOperation] = operation
-	if action != "" {
-		shared.Metadata[MetadataKeySoapAction] = action
+	if shared.Metadata != nil {
+		shared.Metadata[MetadataKeySoapOperation] = operation
+		if action != "" {
+			shared.Metadata[MetadataKeySoapAction] = action
+		}
 	}
+	// Surface the operation as the request's standard operation dimension. All SOAP
+	// operations share one route, so the route-level OperationPath is just "/";
+	// overwriting it is safe — it is consumed only by analytics metadata
+	// (x-wso2-operation-path), tracing spans, and the Python policy bridge.
+	shared.OperationPath = operation
 }
 
 // actionFromHeaders extracts the SOAP action from the SOAPAction header (1.1) or

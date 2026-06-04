@@ -248,6 +248,54 @@ func (p *panicPublisher) Publish(event *dto.Event) {
 	panic("simulated panic in publisher")
 }
 
+// TestProcess_SoapAnalytics verifies that the SOAP operation resolved by the
+// soap-dispatch system policy is forwarded into published events.
+func TestProcess_SoapAnalytics(t *testing.T) {
+	cfg := &config.Config{}
+	analytics := NewAnalytics(cfg)
+
+	mockPub := &mockPublisher{}
+	analytics.publishers = append(analytics.publishers, mockPub)
+
+	logEntry := createLogEntryWithMetadata(map[string]string{
+		APINameKey:       "Calculator",
+		APITypeKey:       "SoapApi",
+		"soap_operation": "Add",
+		"soap_action":    "urn:Add",
+	})
+
+	analytics.Process(logEntry)
+
+	require.True(t, mockPub.called)
+	require.NotNil(t, mockPub.event)
+
+	soap, ok := mockPub.event.Properties["soapAnalytics"].(map[string]interface{})
+	require.True(t, ok, "soapAnalytics property should be present for SoapApi events")
+	assert.Equal(t, "Add", soap["soap_operation"])
+	assert.Equal(t, "urn:Add", soap["soap_action"])
+}
+
+// TestProcess_NonSoapEventHasNoSoapAnalytics verifies REST events are unaffected.
+func TestProcess_NonSoapEventHasNoSoapAnalytics(t *testing.T) {
+	cfg := &config.Config{}
+	analytics := NewAnalytics(cfg)
+
+	mockPub := &mockPublisher{}
+	analytics.publishers = append(analytics.publishers, mockPub)
+
+	logEntry := createLogEntryWithMetadata(map[string]string{
+		APINameKey: "RestAPI",
+		APITypeKey: "RestApi",
+	})
+
+	analytics.Process(logEntry)
+
+	require.True(t, mockPub.called)
+	require.NotNil(t, mockPub.event)
+	_, exists := mockPub.event.Properties["soapAnalytics"]
+	assert.False(t, exists, "soapAnalytics must not be present for non-SOAP events")
+}
+
 // =============================================================================
 // Constants Tests
 // =============================================================================
