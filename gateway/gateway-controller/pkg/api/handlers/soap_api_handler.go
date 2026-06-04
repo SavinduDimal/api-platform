@@ -19,6 +19,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +34,43 @@ import (
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/storage"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/utils"
 )
+
+// mapSoapAPIDeployError maps deployment errors to HTTP responses, surfacing
+// per-field validation details (mirrors the RestAPI handler's error mapping).
+func mapSoapAPIDeployError(c *gin.Context, operation string, err error) {
+	if storage.IsConflictError(err) {
+		c.JSON(http.StatusConflict, api.ErrorResponse{
+			Status:  "error",
+			Message: err.Error(),
+		})
+		return
+	}
+	if mapRenderError(c, operation, err) {
+		return
+	}
+
+	var validationErr *utils.ValidationErrorListError
+	if errors.As(err, &validationErr) {
+		apiErrors := make([]api.ValidationError, len(validationErr.Errors))
+		for i, e := range validationErr.Errors {
+			apiErrors[i] = api.ValidationError{
+				Field:   stringPtr(e.Field),
+				Message: stringPtr(e.Message),
+			}
+		}
+		c.JSON(http.StatusBadRequest, api.ErrorResponse{
+			Status:  "error",
+			Message: "Configuration validation failed",
+			Errors:  &apiErrors,
+		})
+		return
+	}
+
+	c.JSON(http.StatusBadRequest, api.ErrorResponse{
+		Status:  "error",
+		Message: err.Error(),
+	})
+}
 
 // CreateSoapAPI implements ServerInterface.CreateSoapAPI
 // (POST /soap-apis)
@@ -62,20 +100,7 @@ func (s *APIServer) CreateSoapAPI(c *gin.Context) {
 	})
 	if err != nil {
 		log.Error("Failed to deploy SOAP API configuration", slog.Any("error", err))
-		if storage.IsConflictError(err) {
-			c.JSON(http.StatusConflict, api.ErrorResponse{
-				Status:  "error",
-				Message: err.Error(),
-			})
-			return
-		}
-		if mapRenderError(c, "create", err) {
-			return
-		}
-		c.JSON(http.StatusBadRequest, api.ErrorResponse{
-			Status:  "error",
-			Message: err.Error(),
-		})
+		mapSoapAPIDeployError(c, "create", err)
 		return
 	}
 
@@ -190,20 +215,7 @@ func (s *APIServer) UpdateSoapAPI(c *gin.Context, id string) {
 	})
 	if err != nil {
 		log.Error("Failed to update SOAP API configuration", slog.Any("error", err))
-		if storage.IsConflictError(err) {
-			c.JSON(http.StatusConflict, api.ErrorResponse{
-				Status:  "error",
-				Message: err.Error(),
-			})
-			return
-		}
-		if mapRenderError(c, "update", err) {
-			return
-		}
-		c.JSON(http.StatusBadRequest, api.ErrorResponse{
-			Status:  "error",
-			Message: err.Error(),
-		})
+		mapSoapAPIDeployError(c, "update", err)
 		return
 	}
 

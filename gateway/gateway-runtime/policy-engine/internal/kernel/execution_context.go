@@ -167,17 +167,25 @@ func (ec *PolicyExecutionContext) handlePolicyError(
 
 	errorBody := fmt.Sprintf(`{"error":"Internal Server Error","error_id":"%s"}`, errorID)
 
+	errResp := policy.ImmediateResponse{
+		StatusCode: int(typev3.StatusCode_InternalServerError),
+		Headers: map[string]string{
+			"content-type": "application/json",
+			"x-error-id":   errorID,
+		},
+		Body: []byte(errorBody),
+	}
+	// SOAP clients expect a SOAP Fault, not JSON.
+	errResp = applySOAPFaultFormat(errResp, ec)
+
 	return &extprocv3.ProcessingResponse{
 		Response: &extprocv3.ProcessingResponse_ImmediateResponse{
 			ImmediateResponse: &extprocv3.ImmediateResponse{
 				Status: &typev3.HttpStatus{
-					Code: typev3.StatusCode_InternalServerError,
+					Code: typev3.StatusCode(errResp.StatusCode),
 				},
-				Headers: buildHeaderValueOptions(map[string]string{
-					"content-type": "application/json",
-					"x-error-id":   errorID,
-				}),
-				Body: []byte(errorBody),
+				Headers: buildHeaderValueOptions(errResp.Headers),
+				Body:    errResp.Body,
 			},
 		},
 	}

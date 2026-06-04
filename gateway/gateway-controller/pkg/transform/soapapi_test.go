@@ -113,3 +113,41 @@ func TestSoapAPITransformer_WrongKind(t *testing.T) {
 	_, err := transformer.Transform(makeRestAPIStoredConfig(nil, nil))
 	require.Error(t, err)
 }
+
+// TestSoapAPITransformer_SoapDispatchOnPostOnly verifies the soap-dispatch system
+// policy is attached to the POST (SOAP invocation) route but NOT to the GET (?wsdl)
+// route, whose empty body would otherwise be rejected by envelope validation.
+func TestSoapAPITransformer_SoapDispatchOnPostOnly(t *testing.T) {
+	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, nil)
+
+	cfg := makeSoapAPIStoredConfig(nil)
+	// Add declared operations so dispatch params are populated.
+	soapAPI := cfg.Configuration.(api.SoapAPI)
+	action := "urn:getQuote"
+	soapAPI.Spec.Operations = &[]api.SoapOperation{{Name: "getQuote", SoapAction: &action}}
+	cfg.Configuration = soapAPI
+
+	rdc, err := transformer.Transform(cfg)
+	require.NoError(t, err)
+
+	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
+	getKey := xds.GenerateRouteName("GET", "/stockquote/v1.0", "v1.0", "/", "main.local")
+
+	assert.True(t, findPolicyInChain(rdc, postKey, "wso2_apip_sys_soap_dispatch"),
+		"soap-dispatch must be in the POST route chain")
+	assert.False(t, findPolicyInChain(rdc, getKey, "wso2_apip_sys_soap_dispatch"),
+		"soap-dispatch must NOT be in the GET (?wsdl) route chain")
+
+	// Dispatch params carry the declared operations.
+	for _, p := range rdc.PolicyChains[postKey].Policies {
+		if p.Name == "wso2_apip_sys_soap_dispatch" {
+			ops, ok := p.Params["operations"].([]interface{})
+			require.True(t, ok, "operations param should be a list")
+			require.Len(t, ops, 1)
+			entry := ops[0].(map[string]interface{})
+			assert.Equal(t, "getQuote", entry["name"])
+			assert.Equal(t, "urn:getQuote", entry["soapAction"])
+			assert.Equal(t, true, p.Params["validateEnvelope"])
+		}
+	}
+}

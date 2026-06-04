@@ -24,9 +24,11 @@ import (
 
 	api "github.com/wso2/api-platform/gateway/gateway-controller/pkg/api/management"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/config"
+	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/constants"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/models"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/utils"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/xds"
+	policyenginev1 "github.com/wso2/api-platform/sdk/core/policyengine"
 )
 
 // SoapAPITransformer transforms a StoredConfig (SoapApi kind) into a RuntimeDeployConfig.
@@ -102,6 +104,13 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 	// Collect validated API-level policies (applied to all SOAP operations).
 	apiPolicies := t.rest.collectAPIPolicies(apiData.Policies)
 
+	// soap-dispatch system policy: resolves the logical SOAP operation (SOAPAction
+	// header / Content-Type action parameter / body QName) and publishes it to the
+	// shared policy context + analytics metadata. Attached to the POST (SOAP
+	// invocation) route ONLY — the GET (?wsdl) route carries no body and must not
+	// be rejected by envelope validation.
+	soapDispatch := soapDispatchPolicyInstance(apiData)
+
 	// A SOAP API has a single service resource at the context path. Create a route per HTTP
 	// method we accept: POST for SOAP invocations and GET for ?wsdl/?xsd passthrough. The "/"
 	// operation path makes the route match the context exactly; the query string (?wsdl) is
@@ -120,11 +129,44 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 			},
 		}
 
-		// Policy chain: API-level policies + injected system policies (e.g. analytics).
+		// Policy chain: [soap-dispatch (POST only)] + API-level policies, with
+		// system policies (e.g. analytics) injected in front.
 		chain := t.rest.buildPolicyChain(apiPolicies, apiData.Policies, nil)
+		if method == "POST" {
+			chain = append([]policyenginev1.PolicyInstance{soapDispatch}, chain...)
+		}
 		injected := utils.InjectSystemPolicies(chain, t.systemConfig, nil)
 		rdc.PolicyChains[routeKey] = sdkChainToModel(injected)
 	}
 
 	return rdc, nil
+}
+
+// soapDispatchPolicyInstance builds the soap-dispatch system policy instance carrying
+// the API's declared operations and SOAP version as parameters, so the policy can map
+// raw SOAPAction values / body elements to logical operation names at runtime.
+func soapDispatchPolicyInstance(apiData api.SoapAPIData) policyenginev1.PolicyInstance {
+	params := map[string]interface{}{
+		"validateEnvelope": true,
+	}
+	if apiData.SoapVersion != nil {
+		params["soapVersion"] = string(*apiData.SoapVersion)
+	}
+	if apiData.Operations != nil && len(*apiData.Operations) > 0 {
+		ops := make([]interface{}, 0, len(*apiData.Operations))
+		for _, op := range *apiData.Operations {
+			entry := map[string]interface{}{"name": op.Name}
+			if op.SoapAction != nil {
+				entry["soapAction"] = *op.SoapAction
+			}
+			ops = append(ops, entry)
+		}
+		params["operations"] = ops
+	}
+	return policyenginev1.PolicyInstance{
+		Name:       constants.SOAP_DISPATCH_SYSTEM_POLICY_NAME,
+		Version:    constants.SOAP_DISPATCH_SYSTEM_POLICY_VERSION,
+		Enabled:    true,
+		Parameters: params,
+	}
 }
