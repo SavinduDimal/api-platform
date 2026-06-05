@@ -114,6 +114,50 @@ func TestSoapAPITransformer_WrongKind(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestSoapAPITransformer_PerOperationChains verifies that declared operations with a
+// non-empty soapAction get their own route key carrying operation-level policies, while
+// the generic POST route keeps API-level policies only.
+func TestSoapAPITransformer_PerOperationChains(t *testing.T) {
+	defs := map[string]models.PolicyDefinition{
+		"api-key-auth|v1.0.0":    {Name: "api-key-auth", Version: "v1.0.0"},
+		"basic-ratelimit|v1.0.0": {Name: "basic-ratelimit", Version: "v1.0.0"},
+	}
+	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, defs)
+
+	cfg := makeSoapAPIStoredConfig([]api.Policy{{Name: "api-key-auth", Version: "v1"}})
+	soapAPI := cfg.Configuration.(api.SoapAPI)
+	addAction := "urn:Add"
+	emptyAction := ""
+	opPolicies := []api.Policy{{Name: "basic-ratelimit", Version: "v1"}}
+	soapAPI.Spec.Operations = &[]api.SoapOperation{
+		{Name: "Add", SoapAction: &addAction, Policies: &opPolicies},
+		{Name: "DocLiteralOp", SoapAction: &emptyAction},
+	}
+	cfg.Configuration = soapAPI
+
+	rdc, err := transformer.Transform(cfg)
+	require.NoError(t, err)
+
+	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
+	perOpKey := xds.GenerateSoapOperationRouteName("/stockquote/v1.0", "v1.0", "main.local", "urn:Add")
+
+	// 2 base routes + 1 per-op route (empty soapAction op gets no route).
+	require.Len(t, rdc.Routes, 3)
+	require.Contains(t, rdc.Routes, perOpKey)
+	assert.Equal(t, "Add", rdc.Routes[perOpKey].OperationPath,
+		"per-op route should be labelled with the logical operation name")
+
+	// Per-op chain: soap-dispatch + API-level + operation-level.
+	assert.True(t, findPolicyInChain(rdc, perOpKey, "wso2_apip_sys_soap_dispatch"))
+	assert.True(t, findPolicyInChain(rdc, perOpKey, "api-key-auth"))
+	assert.True(t, findPolicyInChain(rdc, perOpKey, "basic-ratelimit"))
+
+	// Generic POST chain: API-level only — no operation-level policy.
+	assert.True(t, findPolicyInChain(rdc, postKey, "api-key-auth"))
+	assert.False(t, findPolicyInChain(rdc, postKey, "basic-ratelimit"),
+		"operation-level policy must not leak onto the generic POST route")
+}
+
 // TestSoapAPITransformer_SoapDispatchOnPostOnly verifies the soap-dispatch system
 // policy is attached to the POST (SOAP invocation) route but NOT to the GET (?wsdl)
 // route, whose empty body would otherwise be rejected by envelope validation.

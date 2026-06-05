@@ -139,6 +139,39 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 		rdc.PolicyChains[routeKey] = sdkChainToModel(injected)
 	}
 
+	// Per-operation routes (SOAP 1.1): each declared operation with a non-empty
+	// soapAction gets its own route key — matching the per-operation Envoy route
+	// emitted by the xDS translator — carrying API-level + operation-level policies.
+	// Requests that don't match any SOAPAction fall through to the generic POST
+	// route above (API-level policies only).
+	if apiData.Operations != nil {
+		for _, op := range *apiData.Operations {
+			if op.SoapAction == nil || strings.TrimSpace(*op.SoapAction) == "" {
+				continue
+			}
+			action := strings.TrimSpace(*op.SoapAction)
+			routeKey := xds.GenerateSoapOperationRouteName(apiData.Context, apiData.Version, effectiveMainVHost, action)
+
+			rdc.Routes[routeKey] = &models.Route{
+				Method: "POST",
+				Path:   xds.ConstructFullPath(apiData.Context, apiData.Version, "/"),
+				// Label the route with the logical operation so route metadata
+				// (analytics, tracing) reflects it even before soap-dispatch runs.
+				OperationPath:   op.Name,
+				Vhost:           effectiveMainVHost,
+				AutoHostRewrite: mainAutoHostRewrite,
+				Upstream: models.RouteUpstream{
+					ClusterKey: mainUpstream.ClusterKey,
+				},
+			}
+
+			chain := t.rest.buildPolicyChain(apiPolicies, apiData.Policies, op.Policies)
+			chain = append([]policyenginev1.PolicyInstance{soapDispatch}, chain...)
+			injected := utils.InjectSystemPolicies(chain, t.systemConfig, nil)
+			rdc.PolicyChains[routeKey] = sdkChainToModel(injected)
+		}
+	}
+
 	return rdc, nil
 }
 

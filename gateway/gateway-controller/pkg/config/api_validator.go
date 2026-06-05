@@ -546,6 +546,15 @@ func (v *APIValidator) validateContext(context string) []ValidationError {
 		})
 	}
 
+	// '|' is the segment separator of internal route names (METHOD|PATH|VHOST...);
+	// allowing it in the context would corrupt route-name parsing (vhost grouping).
+	if strings.Contains(context, "|") {
+		errors = append(errors, ValidationError{
+			Field:   "spec.context",
+			Message: "Context must not contain the '|' character",
+		})
+	}
+
 	return errors
 }
 
@@ -602,6 +611,15 @@ func (v *APIValidator) validateOperations(operations []api.Operation) []Validati
 			errors = append(errors, ValidationError{
 				Field:   fmt.Sprintf("spec.operations[%d].path", i),
 				Message: "Operation path must start with /",
+			})
+		}
+
+		// '|' is the segment separator of internal route names (METHOD|PATH|VHOST...);
+		// allowing it in a path would corrupt route-name parsing (vhost grouping).
+		if strings.Contains(op.Path, "|") {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("spec.operations[%d].path", i),
+				Message: "Operation path must not contain the '|' character",
 			})
 		}
 
