@@ -192,6 +192,9 @@ func soapDispatchPolicyInstance(apiData api.SoapAPIData) policyenginev1.PolicyIn
 			if op.SoapAction != nil {
 				entry["soapAction"] = *op.SoapAction
 			}
+			if op.BodyElement != nil {
+				entry["bodyElement"] = *op.BodyElement
+			}
 			ops = append(ops, entry)
 		}
 		params["operations"] = ops

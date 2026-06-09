@@ -124,6 +124,43 @@ func TestOnRequestBody_ResolvesFromBodyQName(t *testing.T) {
 	}
 }
 
+func TestOnRequestBody_ResolvesFromBodyElementMapping(t *testing.T) {
+	p := &SoapDispatchPolicy{}
+	// Document/literal: the body wrapper (GetQuoteRequest) differs from the
+	// operation name (getQuote); the bodyElement mapping must resolve it.
+	params := map[string]interface{}{
+		"operations": []interface{}{
+			map[string]interface{}{"name": "getQuote", "soapAction": "", "bodyElement": "GetQuoteRequest"},
+		},
+	}
+	envelope := `<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="http://example.com/q">
+  <soap:Body><tns:GetQuoteRequest><sym>WSO2</sym></tns:GetQuoteRequest></soap:Body>
+</soap:Envelope>`
+	ctx := bodyCtx(nil, envelope)
+
+	p.OnRequestBody(context.Background(), ctx, params)
+
+	if got := ctx.SharedContext.Metadata[MetadataKeySoapOperation]; got != "getQuote" {
+		t.Fatalf("expected operation 'getQuote' resolved from bodyElement mapping, got %v", got)
+	}
+	if ctx.SharedContext.OperationPath != "getQuote" {
+		t.Fatalf("expected OperationPath 'getQuote', got %q", ctx.SharedContext.OperationPath)
+	}
+}
+
+func TestResolveOperationName_BodyElementPreferredOverName(t *testing.T) {
+	ops := []declaredOperation{
+		// An unrelated op whose NAME collides with this op's wrapper must not win;
+		// the explicit bodyElement mapping takes precedence.
+		{name: "GetQuoteRequest", soapAction: "urn:other"},
+		{name: "getQuote", bodyElement: "GetQuoteRequest"},
+	}
+	if got := resolveOperationName("", "GetQuoteRequest", ops); got != "getQuote" {
+		t.Fatalf("expected bodyElement mapping to win → 'getQuote', got %q", got)
+	}
+}
+
 func TestOnRequestBody_Soap12Envelope(t *testing.T) {
 	p := &SoapDispatchPolicy{}
 	ctx := bodyCtx(nil, soap12Envelope)

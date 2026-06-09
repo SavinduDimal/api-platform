@@ -4559,6 +4559,16 @@ components:
             When set to a non-empty value, an Envoy route with a matching SOAPAction header
             matcher is emitted for this operation.
           example: "urn:getQuote"
+        bodyElement:
+          type: string
+          description: >
+            Local name of the first child element of the SOAP Body for this operation
+            (the document/literal request wrapper element). Used to resolve the logical
+            operation when the SOAPAction is empty or absent — common for document/literal
+            services where the wrapper element name differs from the operation name (e.g.
+            operation getQuote with body element GetQuoteRequest). When omitted, the
+            operation name is matched against the body element instead.
+          example: GetQuoteRequest
         policies:
           type: array
           description: Operation-level policies (applied in addition to API-level policies)

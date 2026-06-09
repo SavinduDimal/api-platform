@@ -188,11 +188,12 @@ func actionFromHeaders(headers *policy.Headers) string {
 
 // declaredOperation is one entry of the params.operations mapping table.
 type declaredOperation struct {
-	name       string
-	soapAction string
+	name        string
+	soapAction  string
+	bodyElement string
 }
 
-// declaredOperations decodes params.operations ([]{name, soapAction}).
+// declaredOperations decodes params.operations ([]{name, soapAction, bodyElement}).
 func declaredOperations(params map[string]interface{}) []declaredOperation {
 	raw, ok := params["operations"].([]interface{})
 	if !ok {
@@ -211,7 +212,10 @@ func declaredOperations(params map[string]interface{}) []declaredOperation {
 		if v, ok := m["soapAction"].(string); ok {
 			op.soapAction = v
 		}
-		if op.name != "" || op.soapAction != "" {
+		if v, ok := m["bodyElement"].(string); ok {
+			op.bodyElement = v
+		}
+		if op.name != "" || op.soapAction != "" || op.bodyElement != "" {
 			ops = append(ops, op)
 		}
 	}
@@ -220,6 +224,11 @@ func declaredOperations(params map[string]interface{}) []declaredOperation {
 
 // resolveOperationName maps a raw action and/or body element to a logical operation
 // name using the declared operations; falls back to the raw value when undeclared.
+//
+// For body-element dispatch (document/literal), an explicit bodyElement mapping is
+// preferred — the wrapper element name frequently differs from the operation name (e.g.
+// operation getQuote with body element GetQuoteRequest) — and only when no operation
+// declares a matching bodyElement does it fall back to matching the operation name.
 func resolveOperationName(action, bodyElement string, ops []declaredOperation) string {
 	if action != "" {
 		for _, op := range ops {
@@ -230,6 +239,13 @@ func resolveOperationName(action, bodyElement string, ops []declaredOperation) s
 		return action
 	}
 	if bodyElement != "" {
+		// 1. Explicit bodyElement mapping (handles wrapper != operation name).
+		for _, op := range ops {
+			if op.bodyElement != "" && strings.EqualFold(op.bodyElement, bodyElement) && op.name != "" {
+				return op.name
+			}
+		}
+		// 2. Fall back to matching the operation name itself.
 		for _, op := range ops {
 			if op.name != "" && strings.EqualFold(op.name, bodyElement) {
 				return op.name

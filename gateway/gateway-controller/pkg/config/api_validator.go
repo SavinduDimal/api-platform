@@ -713,6 +713,7 @@ func (v *APIValidator) validateSoapOperations(operations *[]api.SoapOperation) [
 
 	namesSeen := make(map[string]bool)
 	actionsSeen := make(map[string]bool)
+	bodyElementsSeen := make(map[string]bool)
 
 	for i, op := range *operations {
 		if op.Name == "" {
@@ -741,6 +742,18 @@ func (v *APIValidator) validateSoapOperations(operations *[]api.SoapOperation) [
 				})
 			}
 			actionsSeen[*op.SoapAction] = true
+		}
+
+		// A non-empty bodyElement disambiguates document/literal dispatch by the
+		// SOAP Body wrapper name; duplicates would resolve ambiguously to two operations.
+		if op.BodyElement != nil && *op.BodyElement != "" {
+			if bodyElementsSeen[*op.BodyElement] {
+				errors = append(errors, ValidationError{
+					Field:   fmt.Sprintf("spec.operations[%d].bodyElement", i),
+					Message: fmt.Sprintf("Duplicate bodyElement '%s'; each non-empty bodyElement must be unique", *op.BodyElement),
+				})
+			}
+			bodyElementsSeen[*op.BodyElement] = true
 		}
 	}
 
