@@ -647,6 +647,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     put:
       summary: Update an existing SoapAPI
@@ -685,6 +691,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SoapAPI not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -735,9 +747,9 @@ paths:
   /soap-apis/{id}/api-keys:
     post:
       summary: Generate a new API key for a SoapAPI
-      description: Generate a new API key for a SOAP API in the Gateway.
+      description: Generate a new API key for a SoapAPI in the Gateway. The key is a 32-byte random value encoded in hexadecimal, prefixed with `apip_`. Use the API Key policy on the API to validate incoming requests with this key.
       operationId: createSoapAPIKey
-      x-basicauth-roles: [admin, developer]
+      x-basicauth-roles: [admin, consumer]
       tags:
         - SOAP API Management
       parameters:
@@ -749,6 +761,9 @@ paths:
       requestBody:
         required: true
         content:
+          application/yaml:
+            schema:
+              $ref: "#/components/schemas/APIKeyCreationRequest"
           application/json:
             schema:
               $ref: "#/components/schemas/APIKeyCreationRequest"
@@ -759,6 +774,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIKeyCreationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: SoapAPI not found
           content:
@@ -776,7 +797,7 @@ paths:
       summary: List all API keys for a SoapAPI
       description: List all API keys for a SOAP API in the Gateway.
       operationId: listSoapAPIKeys
-      x-basicauth-roles: [admin, developer]
+      x-basicauth-roles: [admin, consumer]
       tags:
         - SOAP API Management
       parameters:
@@ -798,51 +819,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-
-  /soap-apis/{id}/api-keys/{apiKeyName}/regenerate:
-    post:
-      summary: Regenerate an existing API key for a SoapAPI
-      description: Regenerate an existing API key for a SOAP API.
-      operationId: regenerateSoapAPIKey
-      x-basicauth-roles: [admin, developer]
-      tags:
-        - SOAP API Management
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: apiKeyName
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/APIKeyRegenerationRequest"
-      responses:
-        "200":
-          description: API key regenerated successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIKeyCreationResponse"
-        "404":
-          description: SoapAPI or API key not found
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /soap-apis/{id}/api-keys/{apiKeyName}:
-    put:
-      summary: Update an existing API key for a SoapAPI
-      operationId: updateSoapAPIKey
-      x-basicauth-roles: [admin, developer]
+  /soap-apis/{id}/api-keys/{apiKeyName}/regenerate:
+    post:
+      summary: Regenerate an existing API key for a SoapAPI
+      description: Regenerate an existing API key for a SoapAPI in the Gateway. The previous key is revoked and replaced with a new 32-byte random value encoded in hexadecimal, prefixed with `apip_`.
+      operationId: regenerateSoapAPIKey
+      x-basicauth-roles: [admin, consumer]
       tags:
         - SOAP API Management
       parameters:
@@ -859,9 +848,66 @@ paths:
       requestBody:
         required: true
         content:
+          application/yaml:
+            schema:
+              $ref: "#/components/schemas/APIKeyRegenerationRequest"
           application/json:
             schema:
-              $ref: "#/components/schemas/APIKeyCreationRequest"
+              $ref: "#/components/schemas/APIKeyRegenerationRequest"
+      responses:
+        "200":
+          description: API key regenerated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyCreationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SoapAPI or API key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /soap-apis/{id}/api-keys/{apiKeyName}:
+    put:
+      summary: Update an API key with a new regenerated value
+      description: Update an existing API key of a SoapAPI with a regenerated value. The name in the request body must match the key name in the URL.
+      operationId: updateSoapAPIKey
+      x-basicauth-roles: [admin, consumer]
+      tags:
+        - SOAP API Management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: apiKeyName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              $ref: "#/components/schemas/APIKeyUpdateRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIKeyUpdateRequest"
       responses:
         "200":
           description: API key updated
@@ -869,16 +915,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIKeyCreationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
-      summary: Revoke an API key for a SoapAPI
+      summary: Revoke an API key
+      description: Revoke an existing API key of a SoapAPI in the Gateway.
       operationId: revokeSoapAPIKey
-      x-basicauth-roles: [admin, developer]
+      x-basicauth-roles: [admin, consumer]
       tags:
         - SOAP API Management
       parameters:
@@ -898,9 +957,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/APIKeyRevocationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -4357,6 +4428,30 @@ components:
               description: Server-managed lifecycle fields. Populated on responses.
               allOf:
                 - $ref: '#/components/schemas/ResourceStatus'
+      example:
+        apiVersion: gateway.api-platform.wso2.com/v1alpha1
+        kind: SoapApi
+        metadata:
+          name: stockquote-api-v1.0
+        spec:
+          displayName: StockQuote API
+          version: v1.0
+          context: /stockquote/$version
+          soapVersion: "1.1"
+          upstream:
+            main:
+              url: http://stockquote-service:8080/services/StockQuoteService
+          operations:
+            - name: getQuote
+              soapAction: "urn:getQuote"
+            - name: getFullQuote
+              soapAction: "urn:getFullQuote"
+        status:
+          id: stockquote-api-v1.0
+          state: deployed
+          createdAt: 2026-04-24T07:21:13Z
+          updatedAt: 2026-04-24T07:21:13Z
+          deployedAt: 2026-04-24T07:21:13Z
 
     SoapAPIData:
       type: object
@@ -4368,7 +4463,7 @@ components:
       properties:
         displayName:
           type: string
-          description: Human-readable API name (must be URL-friendly)
+          description: Human-readable API name (must be URL-friendly - only letters, numbers, spaces, hyphens, underscores, and dots allowed)
           minLength: 1
           maxLength: 100
           pattern: '^[a-zA-Z0-9\-_\. ]+$'
@@ -4376,12 +4471,12 @@ components:
         version:
           type: string
           description: Semantic version of the API
-          pattern: '^v?\d+(\.\d+)?(\.\d+)?$'
+          pattern: '^v\d+\.\d+$'
           example: v1.0
         context:
           type: string
-          description: Base path for the SOAP API endpoint on the gateway (must start with /, no trailing slash)
-          pattern: '^\/.*$'
+          description: Base path for the SOAP service endpoint on the gateway (must start with /, no trailing slash). Use $version to embed the version in the path (e.g., /stockquote/$version resolves to /stockquote/v1.0).
+          pattern: '^\/[a-zA-Z0-9_\-\/]*[^\/]$'
           minLength: 1
           maxLength: 200
           example: /stockquote/$version
@@ -4405,16 +4500,31 @@ components:
               $ref: '#/components/schemas/Upstream'
         vhosts:
           type: object
+          required:
+            - main
           description: Custom virtual hosts/domains for the API
           properties:
             main:
               type: string
-              description: Custom virtual host for production traffic
+              description: Custom virtual host/domain for production traffic
+              pattern: '^[a-zA-Z0-9\.\-]+$'
               example: api.example.com
             sandbox:
               type: string
-              description: Custom virtual host for sandbox traffic
-              example: sandbox.api.example.com
+              description: Custom virtual host/domain for sandbox traffic
+              pattern: '^[a-zA-Z0-9\.\-]+$'
+              example: sandbox-api.example.com
+        subscriptionPlans:
+          type: array
+          description: List of subscription plan names available for this API
+          items:
+            type: string
+          example: ["Gold", "Silver"]
+        policies:
+          type: array
+          description: API-level policies applied to all SOAP operations
+          items:
+            $ref: "#/components/schemas/Policy"
         operations:
           type: array
           description: >
@@ -4425,11 +4535,6 @@ components:
             soap-dispatch system policy.
           items:
             $ref: '#/components/schemas/SoapOperation'
-        policies:
-          type: array
-          description: API-level policies applied to all SOAP operations
-          items:
-            $ref: "#/components/schemas/Policy"
         deploymentState:
           type: string
           description: Desired deployment state. Defaults to 'deployed'.

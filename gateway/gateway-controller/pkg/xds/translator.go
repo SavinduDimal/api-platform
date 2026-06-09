@@ -961,8 +961,8 @@ func (t *Translator) translateSoapAPIConfig(cfg *models.StoredConfig, allConfigs
 
 	// Effective vhost (fall back to the gateway default when not specified).
 	effectiveMainVHost := t.config.Router.VHosts.Main.Default
-	if apiData.Vhosts != nil && apiData.Vhosts.Main != nil && strings.TrimSpace(*apiData.Vhosts.Main) != "" {
-		effectiveMainVHost = *apiData.Vhosts.Main
+	if apiData.Vhosts != nil && strings.TrimSpace(apiData.Vhosts.Main) != "" {
+		effectiveMainVHost = apiData.Vhosts.Main
 	}
 
 	apiProjectID := extractProjectIDFromConfig(cfg)
