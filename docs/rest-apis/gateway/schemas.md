@@ -327,6 +327,179 @@ and
 |*anonymous*|object|false|none|none|
 |» status|[ResourceStatus](#schemaresourcestatus)|false|read-only|Server-managed lifecycle fields. Populated on responses.|
 
+<h2 id="tocS_SoapAPIRequest">SoapAPIRequest</h2>
+
+<a id="schemasoapapirequest"></a>
+<a id="schema_SoapAPIRequest"></a>
+<a id="tocSsoapapirequest"></a>
+<a id="tocssoapapirequest"></a>
+
+```json
+{
+  "apiVersion": "gateway.api-platform.wso2.com/v1alpha1",
+  "kind": "SoapApi",
+  "metadata": {
+    "name": "stockquote-api-v1.0"
+  },
+  "spec": {
+    "displayName": "StockQuote API",
+    "version": "v1.0",
+    "context": "/stockquote/$version",
+    "soapVersion": "1.1",
+    "upstream": {
+      "main": {
+        "url": "http://stockquote-service:8080/services/StockQuoteService"
+      }
+    },
+    "rewriteWsdl": true
+  }
+}
+
+```
+
+### Properties
+
+|Name|Type|Required|Restrictions|Description|
+|---|---|---|---|---|
+|apiVersion|string|true|none|API specification version|
+|kind|string|true|none|API type|
+|metadata|[Metadata](#schemametadata)|true|none|none|
+|spec|[SoapAPIData](#schemasoapapidata)|true|none|none|
+
+#### Enumerated Values
+
+|Property|Value|
+|---|---|
+|apiVersion|gateway.api-platform.wso2.com/v1alpha1|
+|kind|SoapApi|
+
+<h2 id="tocS_SoapAPI">SoapAPI</h2>
+
+<a id="schemasoapapi"></a>
+<a id="schema_SoapAPI"></a>
+<a id="tocSsoapapi"></a>
+<a id="tocssoapapi"></a>
+
+```json
+{
+  "apiVersion": "gateway.api-platform.wso2.com/v1alpha1",
+  "kind": "SoapApi",
+  "metadata": {
+    "name": "stockquote-api-v1.0"
+  },
+  "spec": {
+    "displayName": "StockQuote API",
+    "version": "v1.0",
+    "context": "/stockquote/$version",
+    "soapVersion": "1.1",
+    "upstream": {
+      "main": {
+        "url": "http://stockquote-service:8080/services/StockQuoteService"
+      }
+    },
+    "rewriteWsdl": true
+  },
+  "status": {
+    "id": "stockquote-api-v1.0",
+    "state": "deployed",
+    "createdAt": "2026-04-24T07:21:13Z",
+    "updatedAt": "2026-04-24T07:21:13Z",
+    "deployedAt": "2026-04-24T07:21:13Z"
+  }
+}
+
+```
+
+### Properties
+
+allOf
+
+|Name|Type|Required|Restrictions|Description|
+|---|---|---|---|---|
+|*anonymous*|[SoapAPIRequest](#schemasoapapirequest)|false|none|none|
+
+and
+
+|Name|Type|Required|Restrictions|Description|
+|---|---|---|---|---|
+|*anonymous*|object|false|none|none|
+|» status|[ResourceStatus](#schemaresourcestatus)|false|read-only|Server-managed lifecycle fields. Populated on responses.|
+
+<h2 id="tocS_SoapAPIData">SoapAPIData</h2>
+
+<a id="schemasoapapidata"></a>
+<a id="schema_SoapAPIData"></a>
+<a id="tocSsoapapidata"></a>
+<a id="tocssoapapidata"></a>
+
+```json
+{
+  "displayName": "StockQuote API",
+  "version": "v1.0",
+  "context": "/stockquote/$version",
+  "soapVersion": "1.1",
+  "upstream": {
+    "main": {
+      "url": "http://prod-backend:5000/api/v2",
+      "ref": "string",
+      "hostRewrite": "auto"
+    },
+    "sandbox": {
+      "url": "http://prod-backend:5000/api/v2",
+      "ref": "string",
+      "hostRewrite": "auto"
+    }
+  },
+  "vhosts": {
+    "main": "api.example.com",
+    "sandbox": "sandbox-api.example.com"
+  },
+  "subscriptionPlans": [
+    "Gold",
+    "Silver"
+  ],
+  "policies": [
+    {
+      "name": "cors",
+      "version": "v1",
+      "executionCondition": "request.metadata[authenticated] != true",
+      "params": {}
+    }
+  ],
+  "rewriteWsdl": true,
+  "deploymentState": "deployed"
+}
+
+```
+
+### Properties
+
+|Name|Type|Required|Restrictions|Description|
+|---|---|---|---|---|
+|displayName|string|true|none|Human-readable API name (must be URL-friendly - only letters, numbers, spaces, hyphens, underscores, and dots allowed)|
+|version|string|true|none|Semantic version of the API|
+|context|string|true|none|Base path for the SOAP service endpoint on the gateway (must start with /, no trailing slash). Use $version to embed the version in the path (e.g., /stockquote/$version resolves to /stockquote/v1.0).|
+|soapVersion|string|false|none|SOAP protocol version. Defaults to "1.1" if omitted.|
+|upstream|object|true|none|Backend SOAP service endpoint|
+|» main|[Upstream](#schemaupstream)|true|none|Upstream backend configuration (single target or reference)|
+|» sandbox|[Upstream](#schemaupstream)|false|none|Upstream backend configuration (single target or reference)|
+|vhosts|object|false|none|Custom virtual hosts/domains for the API|
+|» main|string|true|none|Custom virtual host/domain for production traffic|
+|» sandbox|string|false|none|Custom virtual host/domain for sandbox traffic|
+|subscriptionPlans|[string]|false|none|List of subscription plan names available for this API|
+|policies|[[Policy](#schemapolicy)]|false|none|API-level policies applied to all SOAP traffic|
+|rewriteWsdl|boolean|false|none|When true (default), the gateway attaches the soap-wsdl-rewrite policy to the WSDL retrieval route, replacing backend service URLs in returned WSDL/XSD documents with the gateway-facing URL so backend endpoints are not exposed to consumers. Set to false to disable (and remove) WSDL rewriting — for example when the backend already returns gateway-aware addresses. The policy can also be attached/customised explicitly via the policies list.|
+|deploymentState|string|false|none|Desired deployment state. Defaults to 'deployed'.|
+
+#### Enumerated Values
+
+|Property|Value|
+|---|---|
+|soapVersion|1.1|
+|soapVersion|1.2|
+|deploymentState|deployed|
+|deploymentState|undeployed|
+
 <h2 id="tocS_Metadata">Metadata</h2>
 
 <a id="schemametadata"></a>

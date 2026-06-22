@@ -16,11 +16,14 @@ enabled = true
 [controller.server]
 gateway_id = "platform-gateway-id"
 
+[logging]
+level = "debug"
+
 [policy_engine.logging]
-level = "info"
+level = "debug"
 
 [controller.logging]
-level = "info"
+level = "debug"
 
 [controller.controlplane]
 insecure_skip_verify = true

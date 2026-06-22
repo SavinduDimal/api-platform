@@ -1,0 +1,447 @@
+{
+  "info": {
+    "name": "WSO2 API Platform — SOAP API (Phase 1)",
+    "description": "Exercises SOAP API support on the WSO2 API Platform gateway: management CRUD, SOAP passthrough (1.1 & 1.2), SOAP Fault generation, per-operation throttling, and document/literal dispatch via bodyElement.\n\nPrerequisites:\n- Gateway up (docker compose up -d) — management on :9090, router on :8080\n- SOAP calculator backend on host :3002 (reachable from the router as host.docker.internal:3002)\n\nRun top-to-bottom (Collection Runner or `newman run`). The 'Management' folder deploys the APIs and saves an API key; later folders depend on them. The 'Cleanup' folder removes everything.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "mgmtUrl", "value": "http://localhost:9090/api/management/v0.9", "type": "string" },
+    { "key": "gwUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "adminUser", "value": "admin", "type": "string" },
+    { "key": "adminPass", "value": "admin", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "basic",
+    "basic": [
+      { "key": "username", "value": "{{adminUser}}", "type": "string" },
+      { "key": "password", "value": "{{adminPass}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Management — Deploy & Inspect",
+      "item": [
+        {
+          "name": "Deploy Calculator API (passthrough)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"SoapApi\",\n  \"metadata\": { \"name\": \"calculator-v1\" },\n  \"spec\": {\n    \"displayName\": \"Calculator SOAP API\",\n    \"version\": \"v1.0\",\n    \"context\": \"/calculator/v1\",\n    \"soapVersion\": \"1.1\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3002/calculator/v1/soap11\" } },\n    \"operations\": [\n      { \"name\": \"Add\", \"soapAction\": \"urn:Add\" },\n      { \"name\": \"Echo\", \"soapAction\": \"urn:Echo\" }\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+                  "if (pm.response.code === 201) {",
+                  "  const j = pm.response.json();",
+                  "  pm.test('kind is SoapApi', () => pm.expect(j.kind).to.eql('SoapApi'));",
+                  "  pm.test('deployed', () => pm.expect(j.status.state).to.eql('deployed'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deploy Calculator API (with api-key-auth)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"SoapApi\",\n  \"metadata\": { \"name\": \"calculator-auth-v1\" },\n  \"spec\": {\n    \"displayName\": \"Calculator SOAP Auth API\",\n    \"version\": \"v1.0\",\n    \"context\": \"/calculator-auth/v1\",\n    \"soapVersion\": \"1.1\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3002/calculator/v1/soap11\" } },\n    \"policies\": [\n      { \"name\": \"api-key-auth\", \"version\": \"v1\", \"params\": { \"key\": \"X-API-Key\", \"in\": \"header\" } }\n    ],\n    \"operations\": [ { \"name\": \"Add\", \"soapAction\": \"urn:Add\" } ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy Calculator API (per-operation throttle)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"SoapApi\",\n  \"metadata\": { \"name\": \"calculator-perop-v1\" },\n  \"spec\": {\n    \"displayName\": \"Calculator PerOp API\",\n    \"version\": \"v1.0\",\n    \"context\": \"/calculator-perop/v1\",\n    \"soapVersion\": \"1.1\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3002/calculator/v1/soap11\" } },\n    \"operations\": [\n      { \"name\": \"Add\", \"soapAction\": \"urn:Add\", \"policies\": [ { \"name\": \"basic-ratelimit\", \"version\": \"v1\", \"params\": { \"limits\": [ { \"requests\": 1, \"duration\": \"1m\" } ] } } ] },\n      { \"name\": \"Echo\", \"soapAction\": \"urn:Echo\" }\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy Calculator API (doc/literal — bodyElement)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"SoapApi\",\n  \"metadata\": { \"name\": \"calculator-doclit-v1\" },\n  \"spec\": {\n    \"displayName\": \"Calculator DocLit API\",\n    \"version\": \"v1.0\",\n    \"context\": \"/calculator-doclit/v1\",\n    \"soapVersion\": \"1.1\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3002/calculator/v1/soap11\" } },\n    \"operations\": [\n      { \"name\": \"Add\", \"soapAction\": \"urn:Add\" },\n      { \"name\": \"Subtract\", \"soapAction\": \"\", \"bodyElement\": \"SubtractOperandsRequest\" }\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "List SOAP APIs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('lists SOAP APIs', () => pm.expect(j.count).to.be.above(0));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Get Calculator API by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-v1"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('has server status block', () => pm.expect(pm.response.json().status.state).to.eql('deployed'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Create API key (saves {{apiKey}})",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-auth-v1/api-keys", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-auth-v1", "api-keys"] },
+            "body": { "mode": "raw", "raw": "{ \"name\": \"postman-key\" }" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const key = pm.response.json().apiKey;",
+              "pm.test('returns an apiKey', () => pm.expect(key).to.be.a('string').and.not.empty);",
+              "pm.collectionVariables.set('apiKey', key);"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. SOAP Invocations (passthrough)",
+      "item": [
+        {
+          "name": "Add — SOAP 1.1 (per-op route)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator/v1", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>3</a><b>4</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('AddResponse result = 7', () => pm.expect(pm.response.text()).to.include('<result>7</result>'));",
+              "pm.test('XML response', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('xml'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Echo — SOAP 1.1",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Echo" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator/v1", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:EchoRequest><message>hello via gateway</message></tns:EchoRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('echoes message', () => pm.expect(pm.response.text()).to.include('hello via gateway'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Subtract — doc/literal via bodyElement (empty SOAPAction)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "\"\"" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-doclit/v1", "host": ["{{gwUrl}}"], "path": ["calculator-doclit", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:SubtractOperandsRequest><a>10</a><b>3</b></tns:SubtractOperandsRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('SubtractOperandsResponse result = 7', () => pm.expect(pm.response.text()).to.include('<result>7</result>'));",
+              "// The gateway resolves operation 'Subtract' from bodyElement 'SubtractOperandsRequest';",
+              "// confirm via policy-engine debug logs (soap_operation -> Subtract)."
+            ] } }
+          ]
+        },
+        {
+          "name": "Add — SOAP 1.2",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/soap+xml; charset=utf-8; action=\"urn:Add\"" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator/v1", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<env:Envelope xmlns:env=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <env:Body><tns:AddRequest><a>8</a><b>5</b></tns:AddRequest></env:Body>\n</env:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('result = 13', () => pm.expect(pm.response.text()).to.include('<result>13</result>'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Faults (gateway-generated SOAP Faults)",
+      "item": [
+        {
+          "name": "Unauthenticated → 401 SOAP Fault",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-auth/v1", "host": ["{{gwUrl}}"], "path": ["calculator-auth", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>1</a><b>2</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+              "pm.test('XML content type (not JSON)', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('xml'));",
+              "pm.test('is a SOAP 1.1 Fault', () => pm.expect(pm.response.text()).to.include('<faultcode>soap:Client</faultcode>'));",
+              "pm.test('not a JSON error body', () => pm.expect(pm.response.text()).to.not.include('{\"error\"'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Authenticated (valid key) → 200",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" },
+              { "key": "X-API-Key", "value": "{{apiKey}}" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-auth/v1", "host": ["{{gwUrl}}"], "path": ["calculator-auth", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>6</a><b>7</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('result = 13', () => pm.expect(pm.response.text()).to.include('<result>13</result>'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Malformed envelope → 400 SOAP Fault",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator/v1", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"] },
+            "body": { "mode": "raw", "raw": "this is not a soap envelope" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('SOAP Fault body', () => pm.expect(pm.response.text()).to.include('<faultcode>soap:Client</faultcode>'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Backend SOAP Fault passes through",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:TriggerFault" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator/v1", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:TriggerFaultRequest><faultString>intended failure</faultString><httpStatus>500</httpStatus></tns:TriggerFaultRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('500 from backend', () => pm.response.to.have.status(500));",
+              "pm.test('backend fault passed through', () => pm.expect(pm.response.text()).to.include('intended failure'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Per-operation throttling (run in order)",
+      "item": [
+        {
+          "name": "Add #1 → 200",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-perop/v1", "host": ["{{gwUrl}}"], "path": ["calculator-perop", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>1</a><b>2</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('first call 200', () => pm.response.to.have.status(200));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Add #2 → 429 SOAP Fault",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Add" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-perop/v1", "host": ["{{gwUrl}}"], "path": ["calculator-perop", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>1</a><b>2</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('second call 429 (rate limited)', () => pm.response.to.have.status(429));",
+              "pm.test('429 is a SOAP Fault', () => pm.expect(pm.response.text()).to.include('<faultcode>soap:Client</faultcode>'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Echo → 200 (different operation, not throttled)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "urn:Echo" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-perop/v1", "host": ["{{gwUrl}}"], "path": ["calculator-perop", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:EchoRequest><message>ping</message></tns:EchoRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Echo not throttled', () => pm.response.to.have.status(200));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Quoted SOAPAction Add → 429 (same per-op route)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/xml; charset=utf-8" },
+              { "key": "SOAPAction", "value": "\"urn:Add\"" }
+            ],
+            "url": { "raw": "{{gwUrl}}/calculator-perop/v1", "host": ["{{gwUrl}}"], "path": ["calculator-perop", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tns=\"http://example.com/soap/calculator/v1\">\n  <soap:Body><tns:AddRequest><a>1</a><b>2</b></tns:AddRequest></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('quoted action hits the same per-op route (429)', () => pm.response.to.have.status(429));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. WSDL",
+      "item": [
+        {
+          "name": "GET ?wsdl (passthrough)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/calculator/v1?wsdl", "host": ["{{gwUrl}}"], "path": ["calculator", "v1"], "query": [ { "key": "wsdl", "value": null } ] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "// The calculator backend serves WSDL at the service root, not at /soap11,",
+              "// so this returns the backend's 404 — proving the GET route reaches the backend.",
+              "// A conventional backend serving <endpoint>?wsdl on the same path returns 200 text/xml.",
+              "pm.test('GET route reaches the backend (not a gateway 404 JSON)', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.not.include('application/json');",
+              "});"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Cleanup",
+      "item": [
+        {
+          "name": "Delete calculator-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('deleted or absent', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));" ] } } ]
+        },
+        {
+          "name": "Delete calculator-auth-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-auth-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-auth-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('deleted or absent', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));" ] } } ]
+        },
+        {
+          "name": "Delete calculator-perop-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-perop-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-perop-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('deleted or absent', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));" ] } } ]
+        },
+        {
+          "name": "Delete calculator-doclit-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/soap-apis/calculator-doclit-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "calculator-doclit-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('deleted or absent', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));" ] } } ]
+        }
+      ]
+    }
+  ]
+}

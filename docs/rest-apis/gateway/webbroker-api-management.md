@@ -683,7 +683,7 @@ Required roles: `admin`, `consumer`
     {
       "name": "my-production-key",
       "displayName": "My Production Key",
-      "apiKey": "***abcdef",
+      "apiKey": "apip_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
       "apiId": "reading-list-api-v1.0",
       "status": "active",
       "createdAt": "2026-04-01T10:30:00Z",
@@ -804,9 +804,7 @@ Update an API key with a custom value instead of auto-generating one.
 
 ```json
 {
-  "displayName": "Updated",
-  "apiKey": "custom-key-999",
-  "issuer": "portal"
+  "name": "my-production-key"
 }
 ```
 
