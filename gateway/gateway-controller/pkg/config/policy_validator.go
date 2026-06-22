@@ -274,16 +274,5 @@ func (pv *PolicyValidator) ValidateSoapAPIPolicies(apiConfig *api.SoapAPI) []Val
 		}
 	}
 
-	if apiConfig.Spec.Operations != nil {
-		for opIdx, operation := range *apiConfig.Spec.Operations {
-			if operation.Policies != nil {
-				for pIdx, policy := range *operation.Policies {
-					errs := pv.validatePolicy(policy, fmt.Sprintf("spec.operations[%d].policies[%d]", opIdx, pIdx))
-					errors = append(errors, errs...)
-				}
-			}
-		}
-	}
-
 	return errors
 }

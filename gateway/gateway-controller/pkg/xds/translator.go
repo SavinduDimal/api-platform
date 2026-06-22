@@ -153,14 +153,12 @@ func GenerateRouteName(method, context, apiVersion, path, vhost string) string {
 	return fmt.Sprintf("%s|%s|%s", method, fullPath, vhost)
 }
 
-// GenerateSoapOperationRouteName creates the route name for a per-operation SOAP route
-// (POST at the service context + SOAPAction header match). Both the Envoy translator and
-// the SOAP policy transformer must use this helper so Envoy route names and policy-chain
+// soapWildcardPath is the operation path for SOAP routes. "/*" makes a SOAP API a single
+// wildcard resource under its context (one POST + one GET route), matching all traffic for
+// the service and proxying it to the backend without per-operation awareness. Both the
+// Envoy translator and the SOAP policy transformer use it so route names and policy-chain
 // keys stay aligned.
-// Format: POST|FULL_PATH|VHOST|soapAction=ACTION
-func GenerateSoapOperationRouteName(context, apiVersion, vhost, soapAction string) string {
-	return GenerateRouteName("POST", context, apiVersion, "/", vhost) + "|soapAction=" + soapAction
-}
+const soapWildcardPath = "/*"
 
 // ConstructFullPath builds the full path by replacing $version placeholder in context and appending path
 // If context contains $version, it will be replaced with the actual apiVersion value
@@ -465,11 +463,9 @@ func (t *Translator) TranslateConfigs(
 	}
 
 	for _, r := range allRoutes {
-		// Extract vhost from route name: "METHOD|PATH|VHOST" with optional extra
-		// discriminator segments after the vhost (e.g. per-operation SOAP routes:
-		// "POST|PATH|VHOST|soapAction=...") — the vhost is always the third segment.
+		// Extract vhost from route name: "METHOD|PATH|VHOST"
 		parts := strings.Split(r.Name, "|")
-		if len(parts) < 3 {
+		if len(parts) != 3 {
 			// Routes without proper naming (e.g., catch-all 404) should be added to all vhosts later
 			continue // or handle error
 		}
@@ -967,51 +963,16 @@ func (t *Translator) translateSoapAPIConfig(cfg *models.StoredConfig, allConfigs
 
 	apiProjectID := extractProjectIDFromConfig(cfg)
 
-	// One route per accepted HTTP method at the service endpoint. Operation path "/" makes
-	// createRoute match the context exactly and rewrite to the backend upstream path.
+	// A SOAP API is a single wildcard resource at the context: POST carries SOAP
+	// envelopes, GET serves ?wsdl/?xsd. The "/*" operation path makes createRoute match
+	// the whole subtree under the context and proxy it to the single backend, with no
+	// per-operation awareness. The query string (?wsdl) is preserved on passthrough.
 	routes := make([]*route.Route, 0, 2)
 	for _, method := range []string{"POST", "GET"} {
-		r := t.createRoute(cfg.UUID, apiData.DisplayName, apiData.Version, apiData.Context, method, "/",
+		r := t.createRoute(cfg.UUID, apiData.DisplayName, apiData.Version, apiData.Context, method, soapWildcardPath,
 			mainClusterName, parsedMainURL.Path, effectiveMainVHost, cfg.Kind, "", "",
 			apiData.Upstream.Main.HostRewrite, apiProjectID, mainTimeout, false, "", nil)
 		routes = append(routes, r)
-	}
-
-	// Per-operation routes: each declared operation with a non-empty soapAction gets its
-	// own route that additionally matches the SOAPAction header (SOAP 1.1), giving it a
-	// distinct route name → distinct policy chain (per-operation policies/throttling).
-	// The route sorter ranks these above the generic POST route automatically (more
-	// header matchers at equal path specificity). Requests with no matching SOAPAction —
-	// undeclared operations, doc/literal with an empty SOAPAction, and SOAP 1.2 (action
-	// in Content-Type) — fall through to the generic POST route, where the soap-dispatch
-	// policy resolves the operation from the message instead.
-	if apiData.Operations != nil {
-		for _, op := range *apiData.Operations {
-			if op.SoapAction == nil || strings.TrimSpace(*op.SoapAction) == "" {
-				continue
-			}
-			action := strings.TrimSpace(*op.SoapAction)
-
-			r := t.createRoute(cfg.UUID, apiData.DisplayName, apiData.Version, apiData.Context, "POST", "/",
-				mainClusterName, parsedMainURL.Path, effectiveMainVHost, cfg.Kind, "", "",
-				apiData.Upstream.Main.HostRewrite, apiProjectID, mainTimeout, false, "", nil)
-			r.Name = GenerateSoapOperationRouteName(apiData.Context, apiData.Version, effectiveMainVHost, action)
-			// SOAP 1.1 clients may send the SOAPAction value with or without surrounding
-			// quotes (SOAPAction: urn:Add vs SOAPAction: "urn:Add") — accept both.
-			r.Match.Headers = append(r.Match.Headers, &route.HeaderMatcher{
-				Name: "soapaction",
-				HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
-					StringMatch: &matcher.StringMatcher{
-						MatchPattern: &matcher.StringMatcher_SafeRegex{
-							SafeRegex: &matcher.RegexMatcher{
-								Regex: `^"?` + regexp.QuoteMeta(action) + `"?$`,
-							},
-						},
-					},
-				},
-			})
-			routes = append(routes, r)
-		}
 	}
 
 	return routes, clusters, nil

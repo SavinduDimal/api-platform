@@ -77,9 +77,9 @@ func TestSoapAPITransformer_PassthroughRoutes(t *testing.T) {
 	// Exactly one upstream cluster (the backend SOAP service).
 	require.Len(t, rdc.UpstreamClusters, 1)
 
-	// POST + GET routes at the context, on the default main vhost.
-	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
-	getKey := xds.GenerateRouteName("GET", "/stockquote/v1.0", "v1.0", "/", "main.local")
+	// Wildcard POST + GET routes at the context, on the default main vhost.
+	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/*", "main.local")
+	getKey := xds.GenerateRouteName("GET", "/stockquote/v1.0", "v1.0", "/*", "main.local")
 
 	require.Contains(t, rdc.Routes, postKey)
 	require.Contains(t, rdc.Routes, getKey)
@@ -87,7 +87,7 @@ func TestSoapAPITransformer_PassthroughRoutes(t *testing.T) {
 
 	assert.Equal(t, "POST", rdc.Routes[postKey].Method)
 	assert.Equal(t, "GET", rdc.Routes[getKey].Method)
-	assert.Equal(t, "/", rdc.Routes[postKey].OperationPath)
+	assert.Equal(t, "/*", rdc.Routes[postKey].OperationPath)
 }
 
 // TestSoapAPITransformer_APILevelPolicyInChain verifies API-level policies are applied to
@@ -102,7 +102,7 @@ func TestSoapAPITransformer_APILevelPolicyInChain(t *testing.T) {
 	rdc, err := transformer.Transform(cfg)
 	require.NoError(t, err)
 
-	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
+	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/*", "main.local")
 	assert.True(t, findPolicyInChain(rdc, postKey, "api-key-auth"),
 		"API-level policy should be present in the SOAP POST route chain")
 }
@@ -112,86 +112,4 @@ func TestSoapAPITransformer_WrongKind(t *testing.T) {
 	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, nil)
 	_, err := transformer.Transform(makeRestAPIStoredConfig(nil, nil))
 	require.Error(t, err)
-}
-
-// TestSoapAPITransformer_PerOperationChains verifies that declared operations with a
-// non-empty soapAction get their own route key carrying operation-level policies, while
-// the generic POST route keeps API-level policies only.
-func TestSoapAPITransformer_PerOperationChains(t *testing.T) {
-	defs := map[string]models.PolicyDefinition{
-		"api-key-auth|v1.0.0":    {Name: "api-key-auth", Version: "v1.0.0"},
-		"basic-ratelimit|v1.0.0": {Name: "basic-ratelimit", Version: "v1.0.0"},
-	}
-	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, defs)
-
-	cfg := makeSoapAPIStoredConfig([]api.Policy{{Name: "api-key-auth", Version: "v1"}})
-	soapAPI := cfg.Configuration.(api.SoapAPI)
-	addAction := "urn:Add"
-	emptyAction := ""
-	opPolicies := []api.Policy{{Name: "basic-ratelimit", Version: "v1"}}
-	soapAPI.Spec.Operations = &[]api.SoapOperation{
-		{Name: "Add", SoapAction: &addAction, Policies: &opPolicies},
-		{Name: "DocLiteralOp", SoapAction: &emptyAction},
-	}
-	cfg.Configuration = soapAPI
-
-	rdc, err := transformer.Transform(cfg)
-	require.NoError(t, err)
-
-	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
-	perOpKey := xds.GenerateSoapOperationRouteName("/stockquote/v1.0", "v1.0", "main.local", "urn:Add")
-
-	// 2 base routes + 1 per-op route (empty soapAction op gets no route).
-	require.Len(t, rdc.Routes, 3)
-	require.Contains(t, rdc.Routes, perOpKey)
-	assert.Equal(t, "Add", rdc.Routes[perOpKey].OperationPath,
-		"per-op route should be labelled with the logical operation name")
-
-	// Per-op chain: soap-dispatch + API-level + operation-level.
-	assert.True(t, findPolicyInChain(rdc, perOpKey, "wso2_apip_sys_soap_dispatch"))
-	assert.True(t, findPolicyInChain(rdc, perOpKey, "api-key-auth"))
-	assert.True(t, findPolicyInChain(rdc, perOpKey, "basic-ratelimit"))
-
-	// Generic POST chain: API-level only — no operation-level policy.
-	assert.True(t, findPolicyInChain(rdc, postKey, "api-key-auth"))
-	assert.False(t, findPolicyInChain(rdc, postKey, "basic-ratelimit"),
-		"operation-level policy must not leak onto the generic POST route")
-}
-
-// TestSoapAPITransformer_SoapDispatchOnPostOnly verifies the soap-dispatch system
-// policy is attached to the POST (SOAP invocation) route but NOT to the GET (?wsdl)
-// route, whose empty body would otherwise be rejected by envelope validation.
-func TestSoapAPITransformer_SoapDispatchOnPostOnly(t *testing.T) {
-	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, nil)
-
-	cfg := makeSoapAPIStoredConfig(nil)
-	// Add declared operations so dispatch params are populated.
-	soapAPI := cfg.Configuration.(api.SoapAPI)
-	action := "urn:getQuote"
-	soapAPI.Spec.Operations = &[]api.SoapOperation{{Name: "getQuote", SoapAction: &action}}
-	cfg.Configuration = soapAPI
-
-	rdc, err := transformer.Transform(cfg)
-	require.NoError(t, err)
-
-	postKey := xds.GenerateRouteName("POST", "/stockquote/v1.0", "v1.0", "/", "main.local")
-	getKey := xds.GenerateRouteName("GET", "/stockquote/v1.0", "v1.0", "/", "main.local")
-
-	assert.True(t, findPolicyInChain(rdc, postKey, "wso2_apip_sys_soap_dispatch"),
-		"soap-dispatch must be in the POST route chain")
-	assert.False(t, findPolicyInChain(rdc, getKey, "wso2_apip_sys_soap_dispatch"),
-		"soap-dispatch must NOT be in the GET (?wsdl) route chain")
-
-	// Dispatch params carry the declared operations.
-	for _, p := range rdc.PolicyChains[postKey].Policies {
-		if p.Name == "wso2_apip_sys_soap_dispatch" {
-			ops, ok := p.Params["operations"].([]interface{})
-			require.True(t, ok, "operations param should be a list")
-			require.Len(t, ops, 1)
-			entry := ops[0].(map[string]interface{})
-			assert.Equal(t, "getQuote", entry["name"])
-			assert.Equal(t, "urn:getQuote", entry["soapAction"])
-			assert.Equal(t, true, p.Params["validateEnvelope"])
-		}
-	}
 }

@@ -14,7 +14,6 @@ use (
 	./gateway/it
 	./gateway/sample-policies/transform-payload-case
 	./gateway/system-policies/analytics
-	./gateway/system-policies/soap-dispatch
 	./kubernetes/gateway-operator
 	./platform-api/src
 	./samples/sample-service

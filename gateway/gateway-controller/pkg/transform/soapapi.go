@@ -24,28 +24,30 @@ import (
 
 	api "github.com/wso2/api-platform/gateway/gateway-controller/pkg/api/management"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/config"
-	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/constants"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/models"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/utils"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/xds"
-	policyenginev1 "github.com/wso2/api-platform/sdk/core/policyengine"
 )
 
 // SoapAPITransformer transforms a StoredConfig (SoapApi kind) into a RuntimeDeployConfig.
 //
-// Phase 1 (SOAP passthrough): a SOAP API exposes a single service endpoint at the API
-// context path. This produces one upstream cluster plus two routes at that context —
-// POST (carries SOAP envelopes) and GET (serves ?wsdl / ?xsd retrieval) — both proxied
-// unchanged to the backend SOAP service.
+// A SOAP API is a single wildcard POST resource at the API context: all SOAP traffic for
+// the service is proxied, unchanged and without operation awareness, to the backend. A
+// companion wildcard GET route serves ?wsdl / ?xsd retrieval. Two routes are produced
+// (POST + GET) over one upstream cluster.
 //
 // It reuses RestAPITransformer's upstream-resolution and policy helpers so that policy
 // chains, system-policy injection (e.g. analytics), and the route metadata consumed by the
-// policy engine behave consistently with REST. Per-operation SOAPAction routing is added in
-// a later phase.
+// policy engine behave consistently with REST.
 type SoapAPITransformer struct {
 	rest         *RestAPITransformer
 	systemConfig *config.Config
 }
+
+// soapWildcardOpPath is the operation path used for SOAP routes. "/*" makes createRoute
+// (and the matching route-name key) a wildcard under the context, so the SOAP API behaves
+// as one catch-all POST/GET resource rather than per-operation routes.
+const soapWildcardOpPath = "/*"
 
 // NewSoapAPITransformer creates a new SoapAPITransformer.
 func NewSoapAPITransformer(
@@ -101,27 +103,19 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 		mainAutoHostRewrite = false
 	}
 
-	// Collect validated API-level policies (applied to all SOAP operations).
+	// Collect validated API-level policies (applied to all SOAP traffic).
 	apiPolicies := t.rest.collectAPIPolicies(apiData.Policies)
 
-	// soap-dispatch system policy: resolves the logical SOAP operation (SOAPAction
-	// header / Content-Type action parameter / body QName) and publishes it to the
-	// shared policy context + analytics metadata. Attached to the POST (SOAP
-	// invocation) route ONLY — the GET (?wsdl) route carries no body and must not
-	// be rejected by envelope validation.
-	soapDispatch := soapDispatchPolicyInstance(apiData)
-
-	// A SOAP API has a single service resource at the context path. Create a route per HTTP
-	// method we accept: POST for SOAP invocations and GET for ?wsdl/?xsd passthrough. The "/"
-	// operation path makes the route match the context exactly; the query string (?wsdl) is
-	// preserved on passthrough by the upstream.
+	// A SOAP API is one wildcard resource at the context: POST carries SOAP envelopes,
+	// GET serves ?wsdl/?xsd. Both are wildcard ("/*") under the context and proxy to the
+	// single backend, with no operation awareness.
 	for _, method := range []string{"POST", "GET"} {
-		routeKey := xds.GenerateRouteName(method, apiData.Context, apiData.Version, "/", effectiveMainVHost)
+		routeKey := xds.GenerateRouteName(method, apiData.Context, apiData.Version, soapWildcardOpPath, effectiveMainVHost)
 
 		rdc.Routes[routeKey] = &models.Route{
 			Method:          method,
-			Path:            xds.ConstructFullPath(apiData.Context, apiData.Version, "/"),
-			OperationPath:   "/",
+			Path:            xds.ConstructFullPath(apiData.Context, apiData.Version, soapWildcardOpPath),
+			OperationPath:   soapWildcardOpPath,
 			Vhost:           effectiveMainVHost,
 			AutoHostRewrite: mainAutoHostRewrite,
 			Upstream: models.RouteUpstream{
@@ -129,80 +123,11 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 			},
 		}
 
-		// Policy chain: [soap-dispatch (POST only)] + API-level policies, with
-		// system policies (e.g. analytics) injected in front.
+		// Policy chain: API-level policies + injected system policies (e.g. analytics).
 		chain := t.rest.buildPolicyChain(apiPolicies, apiData.Policies, nil)
-		if method == "POST" {
-			chain = append([]policyenginev1.PolicyInstance{soapDispatch}, chain...)
-		}
 		injected := utils.InjectSystemPolicies(chain, t.systemConfig, nil)
 		rdc.PolicyChains[routeKey] = sdkChainToModel(injected)
 	}
 
-	// Per-operation routes (SOAP 1.1): each declared operation with a non-empty
-	// soapAction gets its own route key — matching the per-operation Envoy route
-	// emitted by the xDS translator — carrying API-level + operation-level policies.
-	// Requests that don't match any SOAPAction fall through to the generic POST
-	// route above (API-level policies only).
-	if apiData.Operations != nil {
-		for _, op := range *apiData.Operations {
-			if op.SoapAction == nil || strings.TrimSpace(*op.SoapAction) == "" {
-				continue
-			}
-			action := strings.TrimSpace(*op.SoapAction)
-			routeKey := xds.GenerateSoapOperationRouteName(apiData.Context, apiData.Version, effectiveMainVHost, action)
-
-			rdc.Routes[routeKey] = &models.Route{
-				Method: "POST",
-				Path:   xds.ConstructFullPath(apiData.Context, apiData.Version, "/"),
-				// Label the route with the logical operation so route metadata
-				// (analytics, tracing) reflects it even before soap-dispatch runs.
-				OperationPath:   op.Name,
-				Vhost:           effectiveMainVHost,
-				AutoHostRewrite: mainAutoHostRewrite,
-				Upstream: models.RouteUpstream{
-					ClusterKey: mainUpstream.ClusterKey,
-				},
-			}
-
-			chain := t.rest.buildPolicyChain(apiPolicies, apiData.Policies, op.Policies)
-			chain = append([]policyenginev1.PolicyInstance{soapDispatch}, chain...)
-			injected := utils.InjectSystemPolicies(chain, t.systemConfig, nil)
-			rdc.PolicyChains[routeKey] = sdkChainToModel(injected)
-		}
-	}
-
 	return rdc, nil
-}
-
-// soapDispatchPolicyInstance builds the soap-dispatch system policy instance carrying
-// the API's declared operations and SOAP version as parameters, so the policy can map
-// raw SOAPAction values / body elements to logical operation names at runtime.
-func soapDispatchPolicyInstance(apiData api.SoapAPIData) policyenginev1.PolicyInstance {
-	params := map[string]interface{}{
-		"validateEnvelope": true,
-	}
-	if apiData.SoapVersion != nil {
-		params["soapVersion"] = string(*apiData.SoapVersion)
-	}
-	if apiData.Operations != nil && len(*apiData.Operations) > 0 {
-		ops := make([]interface{}, 0, len(*apiData.Operations))
-		for _, op := range *apiData.Operations {
-			entry := map[string]interface{}{"name": op.Name}
-			if op.SoapAction != nil {
-				entry["soapAction"] = *op.SoapAction
-			}
-			if op.BodyElement != nil {
-				entry["bodyElement"] = *op.BodyElement
-			}
-			ops = append(ops, entry)
-		}
-		params["operations"] = ops
-	}
-	return policyenginev1.PolicyInstance{
-		Name:       constants.SOAP_DISPATCH_SYSTEM_POLICY_NAME,
-		Version:    constants.SOAP_DISPATCH_SYSTEM_POLICY_VERSION,
-		Enabled:    true,
-		Parameters: params,
-	}
 }

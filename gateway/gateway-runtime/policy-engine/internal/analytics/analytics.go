@@ -489,23 +489,6 @@ func (c *Analytics) prepareAnalyticEvent(logEntry *v3.HTTPAccessLogEntry) *dto.E
 		event.Properties["mcpAnalytics"] = mcpAnalytics
 	}
 
-	// SOAP APIs multiplex all operations over a single route, so the invoked
-	// operation is resolved at runtime by the soap-dispatch system policy and
-	// emitted via analytics metadata. Forward it so published events carry the
-	// operation dimension.
-	if keyValuePairsFromMetadata[APITypeKey] == "SoapApi" {
-		soapAnalytics := make(map[string]interface{})
-		if soapOperation, ok := keyValuePairsFromMetadata["soap_operation"]; ok && soapOperation != "" {
-			soapAnalytics["soap_operation"] = soapOperation
-		}
-		if soapAction, ok := keyValuePairsFromMetadata["soap_action"]; ok && soapAction != "" {
-			soapAnalytics["soap_action"] = soapAction
-		}
-		if len(soapAnalytics) > 0 {
-			event.Properties["soapAnalytics"] = soapAnalytics
-		}
-	}
-
 	return event
 }
 

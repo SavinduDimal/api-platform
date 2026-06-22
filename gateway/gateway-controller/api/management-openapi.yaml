@@ -4408,15 +4408,9 @@ components:
           displayName: StockQuote API
           version: v1.0
           context: /stockquote/$version
-          soapVersion: "1.1"
           upstream:
             main:
               url: http://stockquote-service:8080/services/StockQuoteService
-          operations:
-            - name: getQuote
-              soapAction: "urn:getQuote"
-            - name: getFullQuote
-              soapAction: "urn:getFullQuote"
 
     SoapAPI:
       allOf:
@@ -4437,15 +4431,9 @@ components:
           displayName: StockQuote API
           version: v1.0
           context: /stockquote/$version
-          soapVersion: "1.1"
           upstream:
             main:
               url: http://stockquote-service:8080/services/StockQuoteService
-          operations:
-            - name: getQuote
-              soapAction: "urn:getQuote"
-            - name: getFullQuote
-              soapAction: "urn:getFullQuote"
         status:
           id: stockquote-api-v1.0
           state: deployed
@@ -4480,14 +4468,6 @@ components:
           minLength: 1
           maxLength: 200
           example: /stockquote/$version
-        soapVersion:
-          type: string
-          description: SOAP protocol version. Defaults to "1.1" if omitted.
-          enum:
-            - "1.1"
-            - "1.2"
-          default: "1.1"
-          example: "1.1"
         upstream:
           type: object
           description: Backend SOAP service endpoint
@@ -4522,58 +4502,15 @@ components:
           example: ["Gold", "Silver"]
         policies:
           type: array
-          description: API-level policies applied to all SOAP operations
+          description: API-level policies applied to all SOAP traffic
           items:
             $ref: "#/components/schemas/Policy"
-        operations:
-          type: array
-          description: >
-            Declared SOAP operations. Each operation with a non-empty soapAction gets
-            its own Envoy route (matched on the SOAPAction HTTP header) enabling
-            per-operation policies, throttling, and analytics labelling. Operations
-            with an empty soapAction are handled via body inspection by the
-            soap-dispatch system policy.
-          items:
-            $ref: '#/components/schemas/SoapOperation'
         deploymentState:
           type: string
           description: Desired deployment state. Defaults to 'deployed'.
           enum: [deployed, undeployed]
           default: deployed
           example: deployed
-
-    SoapOperation:
-      type: object
-      required:
-        - name
-      properties:
-        name:
-          type: string
-          description: Logical name for this SOAP operation (used in analytics and policy metadata)
-          example: getQuote
-        soapAction:
-          type: string
-          description: >
-            SOAPAction header value (SOAP 1.1) or action parameter in Content-Type (SOAP 1.2).
-            An empty string "" is valid and matches requests with an empty SOAPAction header.
-            When set to a non-empty value, an Envoy route with a matching SOAPAction header
-            matcher is emitted for this operation.
-          example: "urn:getQuote"
-        bodyElement:
-          type: string
-          description: >
-            Local name of the first child element of the SOAP Body for this operation
-            (the document/literal request wrapper element). Used to resolve the logical
-            operation when the SOAPAction is empty or absent — common for document/literal
-            services where the wrapper element name differs from the operation name (e.g.
-            operation getQuote with body element GetQuoteRequest). When omitted, the
-            operation name is matched against the body element instead.
-          example: GetQuoteRequest
-        policies:
-          type: array
-          description: Operation-level policies (applied in addition to API-level policies)
-          items:
-            $ref: "#/components/schemas/Policy"
 
     Metadata:
       type: object
