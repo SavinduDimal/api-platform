@@ -61,6 +61,7 @@ import (
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/certstore"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/config"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/constants"
+	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/errorconfig"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/models"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/storage"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -93,6 +94,12 @@ type Translator struct {
 	certStore    *certstore.CertStore
 	config       *config.Config
 	transformers map[string]models.ConfigTransformer // kind → transformer (optional)
+
+	// errorResponses is the parsed global error-response customization
+	// ([error_handling] in config.toml). Used to shape Envoy-generated
+	// errors: local replies (503/504) and the no-route 404. Nil when
+	// disabled or the file failed to load.
+	errorResponses *errorconfig.ErrorResponses
 }
 
 // resolvedTimeout represents parsed timeout values for an upstream.
@@ -122,11 +129,27 @@ func NewTranslator(logger *slog.Logger, routerConfig *config.RouterConfig, db st
 		}
 	}
 
+	// Load the global error-response customization for Envoy-generated
+	// errors. The policy engine fails fast on the same file at startup;
+	// here a load failure only disables local-reply customization so the
+	// controller can still serve xDS.
+	var errorResponses *errorconfig.ErrorResponses
+	if config != nil && config.ErrorHandling.Enabled {
+		var err error
+		errorResponses, err = errorconfig.LoadFile(config.ErrorHandling.ConfigFile)
+		if err != nil {
+			logger.Error("Failed to load error-response customization config; Envoy local replies keep built-in bodies",
+				slog.String("config_file", config.ErrorHandling.ConfigFile),
+				slog.Any("error", err))
+		}
+	}
+
 	return &Translator{
-		logger:       logger,
-		routerConfig: routerConfig,
-		certStore:    cs,
-		config:       config,
+		logger:         logger,
+		routerConfig:   routerConfig,
+		certStore:      cs,
+		config:         config,
+		errorResponses: errorResponses,
 	}
 }
 
@@ -487,6 +510,10 @@ func (t *Translator) TranslateConfigs(
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal ExtProcPerRoute for catch-all route: %w", err)
 		}
+		// The no-route body/status come from the error-response
+		// customization ([error_handling] + a "404" or "default" entry),
+		// falling back to the built-in {"error":"Not Found"}.
+		noRouteStatus, noRouteContentType, noRouteBody := t.noRouteResponse()
 		routes = append(routes, &route.Route{
 			Name: "no-api-found",
 			Match: &route.RouteMatch{
@@ -496,11 +523,10 @@ func (t *Translator) TranslateConfigs(
 			},
 			Action: &route.Route_DirectResponse{
 				DirectResponse: &route.DirectResponseAction{
-					Status: 404,
+					Status: uint32(noRouteStatus),
 					Body: &core.DataSource{
 						Specifier: &core.DataSource_InlineString{
-							// TODO: (renuka) handle error codes in a separate issue: https://github.com/wso2/api-platform/issues/1637
-							InlineString: `{"error":"Not Found"}`,
+							InlineString: noRouteBody,
 						},
 					},
 				},
@@ -509,7 +535,7 @@ func (t *Translator) TranslateConfigs(
 				{
 					Header: &core.HeaderValue{
 						Key:   "content-type",
-						Value: "application/json",
+						Value: noRouteContentType,
 					},
 				},
 			},
@@ -1108,6 +1134,12 @@ func (t *Translator) createListener(virtualHosts []*route.VirtualHost, isHTTPS b
 		HttpFilters:                httpFilters,
 		ServerHeaderTransformation: convertServerHeaderTransformation(t.routerConfig.HTTPListener.ServerHeaderTransformation),
 		ServerName:                 t.routerConfig.HTTPListener.ServerHeaderValue,
+	}
+
+	// Customize Envoy-generated error bodies (503/504 local replies) from
+	// the global error-response configuration.
+	if localReply := t.buildLocalReplyConfig(); localReply != nil {
+		manager.LocalReplyConfig = localReply
 	}
 
 	// Add access logs if enabled

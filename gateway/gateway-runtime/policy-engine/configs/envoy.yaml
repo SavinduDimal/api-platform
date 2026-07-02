@@ -36,6 +36,11 @@ static_resources:
                 codec_type: AUTO
                 stat_prefix: ingress_http
                 proxy_status_config: {}
+                # local_reply_config: in xDS mode the gateway-controller generates this
+                # dynamically from [error_handling] in config.toml (see
+                # configs/error-responses.yaml) — response-flag mappers for UH/UF/UO (503)
+                # and UT (504), each adding the x-wso2-response-fault-flag header.
+                # The template below is kept as a reference for file-mode setups.
                 # local_reply_config:
                 #   mappers:
                 #     - filter:

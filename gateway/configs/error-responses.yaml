@@ -24,6 +24,21 @@
 #
 # Precedence per status code: per-API errorResponses > this file's exact
 # status entry > this file's `default` entry > built-in gateway response.
+#
+# TWO RENDERING CONTEXTS:
+# 1. Gateway policy errors (auth 401/403, throttle 429, policy 500, ...) are
+#    rendered PER REQUEST by the policy engine: Accept-header negotiation and
+#    all placeholders (including {{requestId}}/{{apiName}}/{{apiVersion}}).
+# 2. Envoy-generated errors never reach the policy engine and are rendered
+#    STATICALLY when configuration is deployed: the 503 entry applies to
+#    "backend unavailable" local replies (flags UH/UF/UO), the 504 entry to
+#    upstream timeouts (UT), and the 404 entry to the no-route response. No
+#    Accept negotiation (the default_media_type entry is used) and only
+#    {{statusCode}}/{{message}}/{{category}} carry values — request-scoped
+#    placeholders render as empty strings. 413 (payload too large) has no
+#    Envoy response flag and keeps its built-in body in this version. These
+#    responses also carry an x-wso2-response-fault-flag header with Envoy's
+#    response flags.
 # =============================================================================
 #
 # responses:
