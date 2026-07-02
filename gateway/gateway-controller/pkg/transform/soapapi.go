@@ -71,12 +71,13 @@ func (t *SoapAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 
 	rdc := &models.RuntimeDeployConfig{
 		Metadata: models.Metadata{
-			UUID:        cfg.UUID,
-			Kind:        cfg.Kind,
-			Handle:      cfg.Handle,
-			Version:     apiData.Version,
-			DisplayName: apiData.DisplayName,
-			ProjectID:   extractProjectID(cfg),
+			UUID:           cfg.UUID,
+			Kind:           cfg.Kind,
+			Handle:         cfg.Handle,
+			Version:        apiData.Version,
+			DisplayName:    apiData.DisplayName,
+			ProjectID:      extractProjectID(cfg),
+			ErrorResponses: serializeErrorResponses(apiData.ErrorResponses),
 		},
 		Context:             strings.ReplaceAll(apiData.Context, "$version", apiData.Version),
 		PolicyChainResolver: "route-key",

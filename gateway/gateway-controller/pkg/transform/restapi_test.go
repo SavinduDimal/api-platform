@@ -344,3 +344,35 @@ func TestResolvePort(t *testing.T) {
 		})
 	}
 }
+
+// TestRestAPITransformer_ErrorResponsesSerialized verifies a REST API's
+// errorResponses are serialized into the runtime metadata for policy-xDS
+// delivery, and omitted when absent.
+func TestRestAPITransformer_ErrorResponsesSerialized(t *testing.T) {
+	transformer := NewRestAPITransformer(testRouterCfg(), &config.Config{}, nil)
+
+	cfg := makeRestAPIStoredConfig(nil, nil)
+	restAPI := cfg.Configuration.(api.RestAPI)
+	override := 502
+	restAPI.Spec.ErrorResponses = &api.ErrorResponses{
+		Responses: map[string]api.ErrorResponseObject{
+			"504": {
+				XStatusCodeOverride: &override,
+				Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {Example: map[string]interface{}{"error": "REST upstream slow"}},
+				},
+			},
+		},
+	}
+	cfg.Configuration = restAPI
+
+	rdc, err := transformer.Transform(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, rdc.Metadata.ErrorResponses, `"504"`)
+	assert.Contains(t, rdc.Metadata.ErrorResponses, `"x-status-code-override":502`)
+	assert.Contains(t, rdc.Metadata.ErrorResponses, "REST upstream slow")
+
+	rdcPlain, err := transformer.Transform(makeRestAPIStoredConfig(nil, nil))
+	require.NoError(t, err)
+	assert.Empty(t, rdcPlain.Metadata.ErrorResponses)
+}

@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/executor"
+	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel/errorformat"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/registry"
 	policy "github.com/wso2/api-platform/sdk/core/policy/v1alpha2"
 )
@@ -130,6 +131,16 @@ type PolicyExecutionContext struct {
 	// Reference to server components
 	server *ExternalProcessorServer
 
+	// errorResolver shapes error ImmediateResponses from the global
+	// error-response configuration; nil disables customization entirely.
+	// Set from the kernel at context initialization.
+	errorResolver *errorformat.Resolver
+
+	// perAPIErrorResponses is this API's errorResponses override (nil when
+	// the API defines none). Set from the RouteConfig at context
+	// initialization; takes precedence over the global configuration.
+	perAPIErrorResponses *errorformat.ErrorResponses
+
 	// phase tracks the current ext_proc processing phase and is read by getModeOverride.
 	phase processingPhase
 }
@@ -175,7 +186,9 @@ func (ec *PolicyExecutionContext) handlePolicyError(
 		},
 		Body: []byte(errorBody),
 	}
-	// SOAP clients expect a SOAP Fault, not JSON.
+	// Custom error format first (design §4.5), then SOAP Fault wrapping for
+	// SOAP APIs when the resolved body isn't already XML.
+	errResp = applyErrorFormat(errResp, ec)
 	errResp = applySOAPFaultFormat(errResp, ec)
 
 	return &extprocv3.ProcessingResponse{

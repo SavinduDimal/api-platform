@@ -344,6 +344,12 @@ func (t *Translator) createRouteConfigResource(
 		"upstream_definition_paths": upstreamDefPaths,
 	}
 
+	// Per-API error-response customization (serialized OpenAPI Responses
+	// Object subset); the engine parses it once at deploy time.
+	if rdc.Metadata.ErrorResponses != "" {
+		data["error_responses"] = rdc.Metadata.ErrorResponses
+	}
+
 	// Add default upstream cluster info
 	if route.Upstream.UseClusterHeader && route.Upstream.DefaultCluster != "" {
 		data["default_upstream_cluster"] = route.Upstream.DefaultCluster

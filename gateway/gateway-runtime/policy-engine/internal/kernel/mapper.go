@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel/errorformat"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/registry"
 )
 
@@ -29,6 +30,11 @@ import (
 // Metadata is pre-populated at deploy time; no request-time parsing needed.
 type RouteConfig struct {
 	Metadata RouteMetadata
+
+	// ErrorResponses is the API's error-response customization (parsed once
+	// from the policy-xDS route metadata at deploy time). Nil when the API
+	// defines none; the global configuration then applies.
+	ErrorResponses *errorformat.ErrorResponses
 }
 
 // RouteMapping maps Envoy metadata keys to PolicyChains for route-specific processing
@@ -56,6 +62,11 @@ type Kernel struct {
 	// Used for value-based redaction in config dumps. Protected by mu (same lock as PolicyChains
 	// so that routes and sensitive values are always updated and read as one atomic snapshot).
 	sensitiveValues []string
+
+	// errorResolver resolves error status codes to customized responses
+	// (global config + per-API overrides). Set once at startup, before
+	// serving; nil means no customization at all.
+	errorResolver *errorformat.Resolver
 }
 
 // NewKernel creates a new Kernel instance
@@ -64,6 +75,22 @@ func NewKernel() *Kernel {
 		RouteConfigs: make(map[string]*RouteConfig),
 		PolicyChains: make(map[string]*registry.PolicyChain),
 	}
+}
+
+// SetErrorFormatResolver installs the error-response resolver. Called once
+// at startup before the server begins processing requests.
+func (k *Kernel) SetErrorFormatResolver(r *errorformat.Resolver) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.errorResolver = r
+}
+
+// ErrorFormatResolver returns the installed error-response resolver (nil
+// when error customization is fully disabled).
+func (k *Kernel) ErrorFormatResolver() *errorformat.Resolver {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.errorResolver
 }
 
 // GetRouteConfig retrieves the route config for a given route key.

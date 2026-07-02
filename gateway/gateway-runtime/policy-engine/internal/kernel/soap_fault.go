@@ -174,17 +174,5 @@ func soapFaultImmediateResponse(immResp policy.ImmediateResponse, version string
 // RequestHeaders message. Used for engine-generated errors that occur before an
 // execution context exists (e.g. no policy chain found).
 func rawRequestContentType(req *extprocv3.ProcessingRequest) string {
-	headers, ok := req.Request.(*extprocv3.ProcessingRequest_RequestHeaders)
-	if !ok || headers.RequestHeaders == nil || headers.RequestHeaders.Headers == nil {
-		return ""
-	}
-	for _, h := range headers.RequestHeaders.Headers.Headers {
-		if strings.EqualFold(h.Key, "content-type") {
-			if len(h.RawValue) > 0 {
-				return string(h.RawValue)
-			}
-			return h.Value
-		}
-	}
-	return ""
+	return rawRequestHeader(req, "content-type")
 }

@@ -128,14 +128,14 @@ func main() {
 			"extproc_port", cfg.PolicyEngine.Server.ExtProcPort)
 	}
 
-	// Parse the global error-response customization config, if enabled.
-	// Phase 0: parse + validate only — nothing applies it yet.
+	// Load the global error-response customization config, if enabled.
+	var globalErrorResponses *errorformat.ErrorResponses
 	if cfg.ErrorHandling.Enabled {
 		if err := errorformat.ValidateMediaTypeName(cfg.ErrorHandling.DefaultMediaType); err != nil {
 			slog.ErrorContext(ctx, "Invalid error_handling.default_media_type", "error", err)
 			os.Exit(1)
 		}
-		globalErrorResponses, err := errorformat.LoadFile(cfg.ErrorHandling.ConfigFile)
+		globalErrorResponses, err = errorformat.LoadFile(cfg.ErrorHandling.ConfigFile)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to load error-response customization config", "error", err)
 			os.Exit(1)
@@ -144,7 +144,7 @@ func main() {
 		for key := range globalErrorResponses.Responses {
 			statusKeys = append(statusKeys, key)
 		}
-		slog.InfoContext(ctx, "Error-response customization config parsed (not applied yet)",
+		slog.InfoContext(ctx, "Error-response customization enabled",
 			"config_file", cfg.ErrorHandling.ConfigFile,
 			"default_media_type", cfg.ErrorHandling.DefaultMediaType,
 			"response_entries", len(globalErrorResponses.Responses),
@@ -161,6 +161,10 @@ func main() {
 
 	// Initialize core components
 	k := kernel.NewKernel()
+	// Install the error-response resolver: globalErrorResponses is nil when
+	// [error_handling] is disabled, in which case only per-API errorResponses
+	// (delivered via policy xDS) customize errors.
+	k.SetErrorFormatResolver(errorformat.NewResolver(globalErrorResponses, cfg.ErrorHandling.DefaultMediaType))
 	reg := registry.GetRegistry()
 
 	// Set config in registry for ${config} CEL resolution

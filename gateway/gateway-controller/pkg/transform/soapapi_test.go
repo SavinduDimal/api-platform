@@ -113,3 +113,33 @@ func TestSoapAPITransformer_WrongKind(t *testing.T) {
 	_, err := transformer.Transform(makeRestAPIStoredConfig(nil, nil))
 	require.Error(t, err)
 }
+
+// TestSoapAPITransformer_ErrorResponsesSerialized verifies a SOAP API's
+// errorResponses are serialized into the runtime metadata for policy-xDS
+// delivery, and omitted when absent.
+func TestSoapAPITransformer_ErrorResponsesSerialized(t *testing.T) {
+	transformer := NewSoapAPITransformer(testRouterCfg(), &config.Config{}, nil)
+
+	cfg := makeSoapAPIStoredConfig(nil)
+	soapAPI := cfg.Configuration.(api.SoapAPI)
+	soapAPI.Spec.ErrorResponses = &api.ErrorResponses{
+		Responses: map[string]api.ErrorResponseObject{
+			"401": {
+				Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {Example: map[string]interface{}{"error": "SOAP auth failed"}},
+				},
+			},
+		},
+	}
+	cfg.Configuration = soapAPI
+
+	rdc, err := transformer.Transform(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, rdc.Metadata.ErrorResponses, `"401"`)
+	assert.Contains(t, rdc.Metadata.ErrorResponses, "SOAP auth failed")
+
+	// Without errorResponses, the field stays empty.
+	rdcPlain, err := transformer.Transform(makeSoapAPIStoredConfig(nil))
+	require.NoError(t, err)
+	assert.Empty(t, rdcPlain.Metadata.ErrorResponses)
+}

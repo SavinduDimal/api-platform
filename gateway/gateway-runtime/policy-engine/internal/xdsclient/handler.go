@@ -32,6 +32,7 @@ import (
 
 	"github.com/wso2/api-platform/common/apikey"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel"
+	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel/errorformat"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/metrics"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/registry"
 	policy "github.com/wso2/api-platform/sdk/core/policy/v1alpha2"
@@ -275,6 +276,19 @@ func (h *ResourceHandler) HandleRouteConfigUpdate(ctx context.Context, resources
 				ProjectID:      getStringFromMap(metaMap, "project_id"),
 				OperationPath:  getStringFromMap(metaMap, "path"),
 				APIId:          getStringFromMap(metaMap, "uuid"),
+			}
+		}
+
+		// Parse per-API error-response customization once at deploy time so
+		// request-time lookups are allocation-free.
+		if erRaw := getStringFromMap(data, "error_responses"); erRaw != "" {
+			parsed, err := errorformat.Parse([]byte(erRaw))
+			if err != nil {
+				slog.WarnContext(ctx, "Ignoring invalid error_responses in route config",
+					"route_key", routeKey,
+					"error", err)
+			} else {
+				rc.ErrorResponses = parsed
 			}
 		}
 

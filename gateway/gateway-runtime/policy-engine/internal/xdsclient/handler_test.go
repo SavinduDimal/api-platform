@@ -533,3 +533,87 @@ func TestBuildPolicyChain_MetadataPropagation(t *testing.T) {
 	assert.Empty(t, chain.Policies)
 	assert.Empty(t, chain.PolicySpecs)
 }
+
+// =============================================================================
+// HandleRouteConfigUpdate error_responses Tests
+// =============================================================================
+
+// makeRouteConfigResource builds a RouteConfig xDS resource the way the
+// controller does: Any(TypeUrl=RouteConfigTypeURL) wrapping Any(structpb.Struct).
+func makeRouteConfigResource(t *testing.T, data map[string]interface{}) *anypb.Any {
+	t.Helper()
+	dataStruct, err := structpb.NewStruct(data)
+	require.NoError(t, err)
+	innerAny, err := anypb.New(dataStruct)
+	require.NoError(t, err)
+	innerBytes, err := proto.Marshal(innerAny)
+	require.NoError(t, err)
+	return &anypb.Any{TypeUrl: RouteConfigTypeURL, Value: innerBytes}
+}
+
+func TestHandleRouteConfigUpdate_ParsesErrorResponses(t *testing.T) {
+	k := kernel.NewKernel()
+	reg := &registry.PolicyRegistry{Policies: make(map[string]*registry.PolicyEntry)}
+	handler := NewResourceHandler(k, reg)
+
+	resource := makeRouteConfigResource(t, map[string]interface{}{
+		"route_key": "GET|/api/v1/users|localhost",
+		"metadata": map[string]interface{}{
+			"display_name": "TestAPI",
+			"version":      "v1.0",
+			"kind":         "RestApi",
+		},
+		"error_responses": `{"responses":{"401":{"content":{"application/json":{"example":{"error":"custom auth"}}}}}}`,
+	})
+
+	err := handler.HandleRouteConfigUpdate(context.Background(), []*anypb.Any{resource}, "v1")
+	require.NoError(t, err)
+
+	rc := k.GetRouteConfig("GET|/api/v1/users|localhost")
+	require.NotNil(t, rc)
+	require.NotNil(t, rc.ErrorResponses, "error_responses should be parsed onto the RouteConfig")
+	entry, ok := rc.ErrorResponses.Responses["401"]
+	require.True(t, ok)
+	assert.NotNil(t, entry.Content["application/json"].Example)
+}
+
+func TestHandleRouteConfigUpdate_InvalidErrorResponsesIgnored(t *testing.T) {
+	k := kernel.NewKernel()
+	reg := &registry.PolicyRegistry{Policies: make(map[string]*registry.PolicyEntry)}
+	handler := NewResourceHandler(k, reg)
+
+	resource := makeRouteConfigResource(t, map[string]interface{}{
+		"route_key": "GET|/api/v1/users|localhost",
+		"metadata": map[string]interface{}{
+			"display_name": "TestAPI",
+		},
+		// invalid: bad status key
+		"error_responses": `{"responses":{"9999":{"content":{"application/json":{"example":{"error":"x"}}}}}}`,
+	})
+
+	// The route must still deploy; only the invalid customization is dropped.
+	err := handler.HandleRouteConfigUpdate(context.Background(), []*anypb.Any{resource}, "v1")
+	require.NoError(t, err)
+
+	rc := k.GetRouteConfig("GET|/api/v1/users|localhost")
+	require.NotNil(t, rc)
+	assert.Nil(t, rc.ErrorResponses)
+}
+
+func TestHandleRouteConfigUpdate_NoErrorResponses(t *testing.T) {
+	k := kernel.NewKernel()
+	reg := &registry.PolicyRegistry{Policies: make(map[string]*registry.PolicyEntry)}
+	handler := NewResourceHandler(k, reg)
+
+	resource := makeRouteConfigResource(t, map[string]interface{}{
+		"route_key": "GET|/api/v1/users|localhost",
+		"metadata":  map[string]interface{}{"display_name": "TestAPI"},
+	})
+
+	err := handler.HandleRouteConfigUpdate(context.Background(), []*anypb.Any{resource}, "v1")
+	require.NoError(t, err)
+
+	rc := k.GetRouteConfig("GET|/api/v1/users|localhost")
+	require.NotNil(t, rc)
+	assert.Nil(t, rc.ErrorResponses)
+}

@@ -42,6 +42,12 @@ type Metadata struct {
 	DisplayName string
 	ProjectID   string
 	LLM         *LLMMetadata // nil for non-LLM kinds
+
+	// ErrorResponses is the API's error-response customization (the OpenAPI
+	// Responses Object subset from the API spec), serialized as JSON for
+	// delivery to the policy engine via policy-xDS route metadata. Empty
+	// when the API defines none.
+	ErrorResponses string
 }
 
 // LLMMetadata carries LLM-specific metadata for provider/proxy scenarios.

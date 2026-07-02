@@ -19,6 +19,7 @@
 package transform
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -78,6 +79,21 @@ func extractProjectID(cfg *models.StoredConfig) string {
 	return ""
 }
 
+// serializeErrorResponses marshals an API's errorResponses to JSON for
+// delivery to the policy engine via policy-xDS route metadata. Returns ""
+// when the API defines none (the global configuration then applies).
+func serializeErrorResponses(er *api.ErrorResponses) string {
+	if er == nil || len(er.Responses) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(er)
+	if err != nil {
+		slog.Warn("Failed to serialize errorResponses; per-API error customization skipped", "error", err)
+		return ""
+	}
+	return string(data)
+}
+
 func (t *RestAPITransformer) Transform(cfg *models.StoredConfig) (*models.RuntimeDeployConfig, error) {
 	restCfg, ok := cfg.Configuration.(api.RestAPI)
 	if !ok {
@@ -89,12 +105,13 @@ func (t *RestAPITransformer) Transform(cfg *models.StoredConfig) (*models.Runtim
 
 	rdc := &models.RuntimeDeployConfig{
 		Metadata: models.Metadata{
-			UUID:        cfg.UUID,
-			Kind:        cfg.Kind,
-			Handle:      cfg.Handle,
-			Version:     apiData.Version,
-			DisplayName: apiData.DisplayName,
-			ProjectID:   projectID,
+			UUID:           cfg.UUID,
+			Kind:           cfg.Kind,
+			Handle:         cfg.Handle,
+			Version:        apiData.Version,
+			DisplayName:    apiData.DisplayName,
+			ProjectID:      projectID,
+			ErrorResponses: serializeErrorResponses(apiData.ErrorResponses),
 		},
 		Context:             strings.ReplaceAll(apiData.Context, "$version", apiData.Version),
 		PolicyChainResolver: "route-key",

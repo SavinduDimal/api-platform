@@ -23,6 +23,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/models"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/storage"
 )
@@ -214,5 +219,89 @@ func TestSlogAdapter(t *testing.T) {
 
 	t.Run("Errorf", func(t *testing.T) {
 		adapter.Errorf("error message %s %d", "error", 500)
+	})
+}
+
+// TestTranslator_RouteConfigCarriesErrorResponses verifies that an API's
+// serialized errorResponses reach the RouteConfig xDS resource (and are
+// omitted when the API defines none).
+func TestTranslator_RouteConfigCarriesErrorResponses(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	translator := NewTranslator(logger)
+
+	erJSON := `{"responses":{"401":{"content":{"application/json":{"example":{"error":"custom"}}}}}}`
+	makeRDC := func(errorResponses string) *models.RuntimeDeployConfig {
+		return &models.RuntimeDeployConfig{
+			Metadata: models.Metadata{
+				Kind:           "RestApi",
+				Handle:         "test-handle",
+				Version:        "v1",
+				DisplayName:    "TestAPI",
+				ErrorResponses: errorResponses,
+			},
+			Context:             "/api",
+			PolicyChainResolver: "route-key",
+			Routes: map[string]*models.Route{
+				"GET|/api/v1/users|localhost": {
+					Method:        "GET",
+					Path:          "/api/v1/users",
+					OperationPath: "/users",
+					Vhost:         "localhost",
+					Upstream:      models.RouteUpstream{ClusterKey: "upstream_main_localhost_8080"},
+				},
+			},
+			PolicyChains: map[string]*models.PolicyChain{
+				"GET|/api/v1/users|localhost": {Policies: []models.Policy{{Name: "rate-limit", Version: "v1"}}},
+			},
+			UpstreamClusters: map[string]*models.UpstreamCluster{
+				"upstream_main_localhost_8080": {BasePath: "/", Endpoints: []models.Endpoint{{Host: "localhost", Port: 8080}}},
+			},
+		}
+	}
+
+	decodeRouteResource := func(t *testing.T, res types.Resource) map[string]interface{} {
+		t.Helper()
+		anyMsg, ok := res.(*anypb.Any)
+		if !ok {
+			t.Fatalf("route config resource is not *anypb.Any: %T", res)
+		}
+		dataStruct := &structpb.Struct{}
+		if err := anyMsg.UnmarshalTo(dataStruct); err != nil {
+			// TypeUrl is overridden, unmarshal manually.
+			if err := proto.Unmarshal(anyMsg.Value, dataStruct); err != nil {
+				t.Fatalf("failed to unmarshal route config struct: %v", err)
+			}
+		}
+		return dataStruct.AsMap()
+	}
+
+	t.Run("with errorResponses", func(t *testing.T) {
+		resources, err := translator.TranslateRuntimeConfigs([]*models.RuntimeDeployConfig{makeRDC(erJSON)})
+		if err != nil {
+			t.Fatalf("TranslateRuntimeConfigs failed: %v", err)
+		}
+		for _, res := range resources[RouteConfigTypeURL] {
+			data := decodeRouteResource(t, res)
+			got, ok := data["error_responses"].(string)
+			if !ok {
+				t.Fatal("route config resource is missing error_responses")
+			}
+			if got != erJSON {
+				t.Errorf("error_responses = %q, want %q", got, erJSON)
+			}
+		}
+	})
+
+	t.Run("without errorResponses", func(t *testing.T) {
+		resources, err := translator.TranslateRuntimeConfigs([]*models.RuntimeDeployConfig{makeRDC("")})
+		if err != nil {
+			t.Fatalf("TranslateRuntimeConfigs failed: %v", err)
+		}
+		for _, res := range resources[RouteConfigTypeURL] {
+			data := decodeRouteResource(t, res)
+			if _, present := data["error_responses"]; present {
+				t.Error("error_responses should be omitted when the API defines none")
+			}
+		}
 	})
 }

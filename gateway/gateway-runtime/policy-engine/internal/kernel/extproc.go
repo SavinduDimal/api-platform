@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	extprocconfigv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -44,6 +45,7 @@ import (
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/config"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/constants"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/executor"
+	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel/errorformat"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/metrics"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/tracing"
 )
@@ -171,8 +173,21 @@ func (s *ExternalProcessorServer) handleProcessingPhase(ctx context.Context, req
 				Headers:    map[string]string{"content-type": "application/json"},
 				Body:       []byte(`{"error":"Internal Server Error"}`),
 			}
-			// SOAP clients expect a SOAP Fault, not JSON.
-			if rm.APIKind == apiKindSoapApi {
+			// Error-response customization applies even without a policy
+			// chain (raw pre-context path).
+			var perAPIErrors *errorformat.ErrorResponses
+			if rc := s.kernel.GetRouteConfig(rm.RouteName); rc != nil {
+				perAPIErrors = rc.ErrorResponses
+			}
+			errResp = formatErrorResponse(errResp, s.kernel.ErrorFormatResolver(), perAPIErrors,
+				rawRequestHeader(req, "accept"), errorformat.PlaceholderValues{
+					RequestID:  rawRequestHeader(req, "x-request-id"),
+					APIName:    rm.APIName,
+					APIVersion: rm.APIVersion,
+				})
+			// SOAP clients expect a SOAP Fault, not JSON — unless the
+			// customization already produced an XML body.
+			if rm.APIKind == apiKindSoapApi && !strings.Contains(strings.ToLower(errResp.Headers["content-type"]), "xml") {
 				errResp = soapFaultImmediateResponse(errResp, soapVersionFromContentType(rawRequestContentType(req)))
 			}
 			return &extprocv3.ProcessingResponse{
@@ -388,6 +403,8 @@ func (s *ExternalProcessorServer) initializeExecutionContext(ctx context.Context
 		(*execCtx).upstreamBasePath = routeMetadata.UpstreamBasePath
 		(*execCtx).apiContext = routeMetadata.Context
 		(*execCtx).upstreamDefinitionPaths = routeMetadata.UpstreamDefinitionPaths
+		(*execCtx).errorResolver = s.kernel.ErrorFormatResolver()
+		(*execCtx).perAPIErrorResponses = rc.ErrorResponses
 		(*execCtx).buildRequestContexts(req.GetRequestHeaders(), routeMetadata)
 		return &routeMetadata
 	}
