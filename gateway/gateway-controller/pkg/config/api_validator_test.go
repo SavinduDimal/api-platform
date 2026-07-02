@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	api "github.com/wso2/api-platform/gateway/gateway-controller/pkg/api/management"
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewAPIValidator(t *testing.T) {
@@ -718,3 +719,245 @@ func createValidWebSubAPIConfig() *api.WebSubAPI {
 	}
 }
 
+func intPtr(i int) *int {
+	return &i
+}
+
+func validErrorResponses() *api.ErrorResponses {
+	return &api.ErrorResponses{
+		Responses: map[string]api.ErrorResponseObject{
+			"401": {
+				Description: stringPtr("Custom auth message"),
+				Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {
+						Example: map[string]interface{}{"error": "Provide a valid API key", "requestId": "{{requestId}}"},
+					},
+				},
+			},
+			"504": {
+				XStatusCodeOverride: intPtr(502),
+				Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {
+						Example: map[string]interface{}{"error": "Upstream slow, try later"},
+					},
+				},
+			},
+			"default": {
+				Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {
+						Example: map[string]interface{}{"code": "{{statusCode}}", "message": "{{message}}"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestValidateErrorResponses_ValidRest(t *testing.T) {
+	v := NewAPIValidator()
+	config := createValidRestAPIConfig()
+	config.Spec.ErrorResponses = validErrorResponses()
+	errors := v.Validate(config)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors, got %v", errors)
+	}
+}
+
+func TestValidateErrorResponses_ValidSoap(t *testing.T) {
+	v := NewAPIValidator()
+	config := &api.SoapAPI{
+		ApiVersion: api.SoapAPIApiVersionGatewayApiPlatformWso2Comv1alpha1,
+		Kind:       api.SoapAPIKindSoapApi,
+		Metadata:   api.Metadata{Name: "test-soap"},
+		Spec: api.SoapAPIData{
+			DisplayName: "Test SOAP",
+			Version:     "v1.0",
+			Context:     "/soap",
+		},
+	}
+	config.Spec.Upstream.Main = api.Upstream{Url: stringPtr("http://backend:8080/services/Test")}
+	config.Spec.ErrorResponses = validErrorResponses()
+	errors := v.Validate(config)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors, got %v", errors)
+	}
+}
+
+func TestValidateErrorResponses_NilIsValid(t *testing.T) {
+	v := NewAPIValidator()
+	if errors := v.validateErrorResponses(nil); len(errors) != 0 {
+		t.Errorf("nil errorResponses should be valid, got %v", errors)
+	}
+}
+
+func TestValidateErrorResponses_Invalid(t *testing.T) {
+	v := NewAPIValidator()
+
+	jsonBody := func(body interface{}) map[string]api.ErrorResponseMediaType {
+		return map[string]api.ErrorResponseMediaType{
+			"application/json": {Example: body},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		er          *api.ErrorResponses
+		wantMessage string
+	}{
+		{
+			name:        "empty responses",
+			er:          &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{}},
+			wantMessage: "at least one response entry",
+		},
+		{
+			name: "invalid status key",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"6xx": {Content: jsonBody(map[string]interface{}{"m": "x"})},
+			}},
+			wantMessage: "invalid response key",
+		},
+		{
+			name: "status key out of range",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"600": {Content: jsonBody(map[string]interface{}{"m": "x"})},
+			}},
+			wantMessage: "invalid response key",
+		},
+		{
+			name: "override out of range",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"504": {
+					XStatusCodeOverride: intPtr(99),
+					Content:             jsonBody(map[string]interface{}{"m": "x"}),
+				},
+			}},
+			wantMessage: "invalid x-status-code-override",
+		},
+		{
+			name: "missing content",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"401": {},
+			}},
+			wantMessage: "at least one media type",
+		},
+		{
+			name: "unknown media type",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"401": {Content: map[string]api.ErrorResponseMediaType{
+					"application/octet-stream": {Example: "x"},
+				}},
+			}},
+			wantMessage: "unsupported media type",
+		},
+		{
+			name: "schema only",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"401": {Content: map[string]api.ErrorResponseMediaType{
+					"application/json": {Schema: map[string]interface{}{"type": "object"}},
+				}},
+			}},
+			wantMessage: "must define 'example' or 'examples'",
+		},
+		{
+			name: "unknown placeholder",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"401": {Content: jsonBody(map[string]interface{}{"m": "{{bogus}}"})},
+			}},
+			wantMessage: "unknown placeholder",
+		},
+		{
+			name: "oversized example",
+			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
+				"401": {Content: jsonBody(strings.Repeat("a", 17*1024))},
+			}},
+			wantMessage: "exceeds maximum size",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := v.validateErrorResponses(tt.er)
+			if len(errors) == 0 {
+				t.Fatalf("expected a validation error containing %q, got none", tt.wantMessage)
+			}
+			found := false
+			for _, e := range errors {
+				if strings.Contains(e.Message, tt.wantMessage) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected an error containing %q, got %v", tt.wantMessage, errors)
+			}
+		})
+	}
+}
+
+// TestErrorResponses_YAMLRoundTrip verifies an API definition carrying
+// errorResponses survives YAML deserialization + reserialization intact —
+// the shape deploy/store paths rely on.
+func TestErrorResponses_YAMLRoundTrip(t *testing.T) {
+	doc := `
+apiVersion: gateway.api-platform.wso2.com/v1alpha1
+kind: RestApi
+metadata:
+  name: test-api-v1.0
+spec:
+  displayName: Test API
+  version: v1.0
+  context: /test/$version
+  upstream:
+    main:
+      url: http://backend:8080
+  operations:
+    - method: GET
+      path: /items
+  errorResponses:
+    responses:
+      "401":
+        description: Custom auth message
+        content:
+          application/json:
+            example: { error: "Provide a valid API key" }
+      "504":
+        x-status-code-override: 502
+        content:
+          application/json:
+            example: { error: "Upstream slow, try later" }
+`
+	var restAPI api.RestAPI
+	if err := yaml.Unmarshal([]byte(doc), &restAPI); err != nil {
+		t.Fatalf("failed to unmarshal API definition: %v", err)
+	}
+
+	er := restAPI.Spec.ErrorResponses
+	if er == nil {
+		t.Fatal("errorResponses was not deserialized")
+	}
+	if len(er.Responses) != 2 {
+		t.Fatalf("expected 2 response entries, got %d", len(er.Responses))
+	}
+	if override := er.Responses["504"].XStatusCodeOverride; override == nil || *override != 502 {
+		t.Errorf("x-status-code-override not preserved, got %v", override)
+	}
+	if er.Responses["401"].Content["application/json"].Example == nil {
+		t.Error("example not preserved for 401 application/json")
+	}
+
+	v := NewAPIValidator()
+	if errors := v.Validate(&restAPI); len(errors) != 0 {
+		t.Errorf("round-tripped config should validate cleanly, got %v", errors)
+	}
+
+	reserialized, err := yaml.Marshal(&restAPI)
+	if err != nil {
+		t.Fatalf("failed to re-marshal: %v", err)
+	}
+	var again api.RestAPI
+	if err := yaml.Unmarshal(reserialized, &again); err != nil {
+		t.Fatalf("failed to unmarshal re-marshaled config: %v", err)
+	}
+	if again.Spec.ErrorResponses == nil || len(again.Spec.ErrorResponses.Responses) != 2 {
+		t.Error("errorResponses lost in re-serialization round trip")
+	}
+}

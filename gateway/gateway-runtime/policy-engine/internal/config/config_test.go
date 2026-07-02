@@ -1370,3 +1370,57 @@ func TestDefaultConfig(t *testing.T) {
 	err := cfg.Validate()
 	assert.NoError(t, err)
 }
+
+// TestErrorHandlingConfig_Defaults tests that error handling is off by default
+func TestErrorHandlingConfig_Defaults(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.False(t, cfg.ErrorHandling.Enabled)
+	assert.Equal(t, "conf/error-responses.yaml", cfg.ErrorHandling.ConfigFile)
+	assert.Equal(t, "application/json", cfg.ErrorHandling.DefaultMediaType)
+}
+
+// TestErrorHandlingConfig_LoadFromFile tests parsing the [error_handling] section
+func TestErrorHandlingConfig_LoadFromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+[policy_engine.config_mode]
+mode = "file"
+
+[policy_engine.file_config]
+path = "configs/policy-chains.yaml"
+
+[error_handling]
+enabled = true
+config_file = "conf/custom-errors.yaml"
+default_media_type = "application/xml"
+`
+	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	require.NoError(t, err)
+
+	cfg, err := Load(configPath)
+	require.NoError(t, err)
+	assert.True(t, cfg.ErrorHandling.Enabled)
+	assert.Equal(t, "conf/custom-errors.yaml", cfg.ErrorHandling.ConfigFile)
+	assert.Equal(t, "application/xml", cfg.ErrorHandling.DefaultMediaType)
+}
+
+// TestErrorHandlingConfig_Validation tests validation of the error handling section
+func TestErrorHandlingConfig_Validation(t *testing.T) {
+	cfg := validConfig()
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: true, ConfigFile: "", DefaultMediaType: "application/json"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "error_handling.config_file")
+
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: true, ConfigFile: "conf/error-responses.yaml", DefaultMediaType: ""}
+	err = cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "error_handling.default_media_type")
+
+	// Disabled: empty fields are fine
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: false}
+	assert.NoError(t, cfg.Validate())
+}

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	api "github.com/wso2/api-platform/gateway/gateway-controller/pkg/api/management"
+	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/errorconfig"
 )
 
 // APIValidator validates API configurations using rule-based validation
@@ -430,6 +431,9 @@ func (v *APIValidator) validateRestData(spec *api.APIConfigData) []ValidationErr
 	// Validate operations
 	errors = append(errors, v.validateOperations(spec.Operations)...)
 
+	// Validate error-response customization
+	errors = append(errors, v.validateErrorResponses(spec.ErrorResponses)...)
+
 	return errors
 }
 
@@ -699,5 +703,74 @@ func (v *APIValidator) validateSoapData(spec *api.SoapAPIData) []ValidationError
 		errors = append(errors, v.validateUpstream("sandbox", spec.Upstream.Sandbox, nil)...)
 	}
 
+	errors = append(errors, v.validateErrorResponses(spec.ErrorResponses)...)
+
+	return errors
+}
+
+// validateErrorResponses validates a per-API errorResponses section: an
+// OpenAPI Responses Object subset keyed by status code or "default". The
+// rules mirror the policy engine's parsing of the global error-response
+// config (pkg/errorconfig holds the shared rules).
+func (v *APIValidator) validateErrorResponses(er *api.ErrorResponses) []ValidationError {
+	if er == nil {
+		return nil
+	}
+
+	var errors []ValidationError
+	if len(er.Responses) == 0 {
+		return []ValidationError{{
+			Field:   "spec.errorResponses.responses",
+			Message: "must define at least one response entry",
+		}}
+	}
+
+	for key, response := range er.Responses {
+		field := fmt.Sprintf("spec.errorResponses.responses.%s", key)
+		if err := errorconfig.ValidateStatusKey(key); err != nil {
+			errors = append(errors, ValidationError{Field: field, Message: err.Error()})
+		}
+		if response.XStatusCodeOverride != nil {
+			if err := errorconfig.ValidateStatusOverride(*response.XStatusCodeOverride); err != nil {
+				errors = append(errors, ValidationError{Field: field, Message: err.Error()})
+			}
+		}
+		if len(response.Content) == 0 {
+			errors = append(errors, ValidationError{
+				Field:   field + ".content",
+				Message: "must define at least one media type",
+			})
+			continue
+		}
+		for mediaType, mt := range response.Content {
+			mtField := fmt.Sprintf("%s.content.%s", field, mediaType)
+			if err := errorconfig.ValidateMediaTypeName(mediaType); err != nil {
+				errors = append(errors, ValidationError{Field: mtField, Message: err.Error()})
+			}
+			hasExamples := mt.Examples != nil && len(*mt.Examples) > 0
+			if mt.Example == nil && !hasExamples {
+				errors = append(errors, ValidationError{
+					Field:   mtField,
+					Message: "must define 'example' or 'examples' (schema alone is descriptive only)",
+				})
+				continue
+			}
+			if mt.Example != nil {
+				if err := errorconfig.ValidateExample(mt.Example); err != nil {
+					errors = append(errors, ValidationError{Field: mtField + ".example", Message: err.Error()})
+				}
+			}
+			if hasExamples {
+				for name, example := range *mt.Examples {
+					if err := errorconfig.ValidateExample(example); err != nil {
+						errors = append(errors, ValidationError{
+							Field:   fmt.Sprintf("%s.examples.%s", mtField, name),
+							Message: err.Error(),
+						})
+					}
+				}
+			}
+		}
+	}
 	return errors
 }

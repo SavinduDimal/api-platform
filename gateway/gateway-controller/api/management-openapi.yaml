@@ -4505,12 +4505,76 @@ components:
           description: API-level policies applied to all SOAP traffic
           items:
             $ref: "#/components/schemas/Policy"
+        errorResponses:
+          $ref: "#/components/schemas/ErrorResponses"
         deploymentState:
           type: string
           description: Desired deployment state. Defaults to 'deployed'.
           enum: [deployed, undeployed]
           default: deployed
           example: deployed
+
+    ErrorResponses:
+      type: object
+      description: >
+        Customization of gateway error responses for this API, shaped as an
+        OpenAPI 3.x Responses Object. Entries are keyed by a 3-digit HTTP
+        status code (e.g. "401") or "default", and take precedence over the
+        gateway's global error-response configuration for the same status
+        code.
+      required:
+        - responses
+      properties:
+        responses:
+          type: object
+          description: Map of HTTP status code (or "default") to the customized response.
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/components/schemas/ErrorResponseObject"
+      example:
+        responses:
+          "401":
+            description: Custom auth message
+            content:
+              application/json:
+                example: { error: "Provide a valid API key" }
+
+    ErrorResponseObject:
+      type: object
+      description: Subset of the OpenAPI Response Object used for error customization.
+      required:
+        - content
+      properties:
+        description:
+          type: string
+          description: Human-readable description (documentation only).
+        x-status-code-override:
+          type: integer
+          description: Return this HTTP status instead of the entry's key (e.g. remap 504 to 502).
+          minimum: 100
+          maximum: 599
+        content:
+          type: object
+          description: Map of media type to the body rendered for it, negotiated against the request Accept header.
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/components/schemas/ErrorResponseMediaType"
+
+    ErrorResponseMediaType:
+      type: object
+      description: >
+        Subset of the OpenAPI Media Type Object used for error customization.
+        The gateway renders `example` (or a named entry from `examples`);
+        `schema` is descriptive only.
+      properties:
+        schema:
+          description: Descriptive schema for the body (not used to synthesize a response).
+        example:
+          description: The body rendered for this media type. String values may use whitelisted {{placeholder}} names.
+        examples:
+          type: object
+          description: Named examples; the default or first entry is rendered.
+          additionalProperties: true
 
     Metadata:
       type: object
@@ -4621,6 +4685,8 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/Operation"
+        errorResponses:
+          $ref: "#/components/schemas/ErrorResponses"
         deploymentState:
           type: string
           description: Desired deployment state - 'deployed' (default) or 'undeployed'. When set to 'undeployed', the API is removed from router traffic but configuration, API keys, and policies are preserved for potential redeployment.

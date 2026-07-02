@@ -288,6 +288,21 @@ max_message_size = 1000000000
 max_header_limit = 8192
 
 # =============================================================================
+# ERROR HANDLING CONFIGURATION
+# =============================================================================
+[error_handling]
+# Enable customization of gateway error responses (messages and status codes).
+# When disabled, the gateway returns its built-in error bodies unchanged.
+enabled = false
+# Path to an OpenAPI Responses Object document (YAML) describing the custom
+# error responses, keyed by HTTP status code or "default".
+# See configs/error-responses.yaml for a commented sample.
+config_file = "conf/error-responses.yaml"
+# Media type rendered when the request Accept header matches none of a
+# response entry's content media types.
+default_media_type = "application/json"
+
+# =============================================================================
 # POLICY CONFIGURATIONS
 # =============================================================================
 

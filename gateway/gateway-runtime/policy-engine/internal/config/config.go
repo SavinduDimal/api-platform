@@ -43,6 +43,23 @@ type Config struct {
 	PolicyConfigurations map[string]interface{} `koanf:"policy_configurations"`
 	Analytics            AnalyticsConfig        `koanf:"analytics"`
 	TracingConfig        TracingConfig          `koanf:"tracing"`
+	ErrorHandling        ErrorHandlingConfig    `koanf:"error_handling"`
+}
+
+// ErrorHandlingConfig holds global error-response customization settings.
+// When enabled, ConfigFile points to an OpenAPI Responses Object document
+// (see docs/gateway/error-response-customization-design.md §4.2) that shapes
+// gateway error responses.
+type ErrorHandlingConfig struct {
+	// Enabled toggles error-response customization on/off
+	Enabled bool `koanf:"enabled"`
+
+	// ConfigFile is the path to the OpenAPI-shaped error-responses YAML file
+	ConfigFile string `koanf:"config_file"`
+
+	// DefaultMediaType is the media type rendered when the request Accept
+	// header matches none of a response entry's content media types
+	DefaultMediaType string `koanf:"default_media_type"`
 }
 
 // AnalyticsConfig holds analytics configuration
@@ -382,6 +399,11 @@ func defaultConfig() *Config {
 			MaxExportBatchSize: 512,
 			SamplingRate:       1.0,
 		},
+		ErrorHandling: ErrorHandlingConfig{
+			Enabled:          false,
+			ConfigFile:       "conf/error-responses.yaml",
+			DefaultMediaType: "application/json",
+		},
 	}
 }
 
@@ -473,6 +495,14 @@ func (c *Config) Validate() error {
 	if c.Analytics.Enabled {
 		if err := c.validateAnalyticsConfig(); err != nil {
 			return fmt.Errorf("analytics configuration validation failed: %v", err)
+		}
+	}
+	if c.ErrorHandling.Enabled {
+		if c.ErrorHandling.ConfigFile == "" {
+			return fmt.Errorf("error_handling.config_file is required when error_handling is enabled")
+		}
+		if c.ErrorHandling.DefaultMediaType == "" {
+			return fmt.Errorf("error_handling.default_media_type is required when error_handling is enabled")
 		}
 	}
 	if c.TracingConfig.Enabled {

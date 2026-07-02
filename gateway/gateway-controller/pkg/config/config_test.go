@@ -1374,3 +1374,28 @@ func TestConfig_CaseInsensitiveAlgorithm(t *testing.T) {
 	err := cfg.Validate()
 	assert.NoError(t, err, "Algorithm validation should be case insensitive")
 }
+
+// TestErrorHandlingConfig_Defaults tests that error-response customization is off by default
+func TestErrorHandlingConfig_Defaults(t *testing.T) {
+	cfg := defaultConfig()
+	assert.False(t, cfg.ErrorHandling.Enabled)
+	assert.Equal(t, "conf/error-responses.yaml", cfg.ErrorHandling.ConfigFile)
+	assert.Equal(t, "application/json", cfg.ErrorHandling.DefaultMediaType)
+}
+
+// TestErrorHandlingConfig_Validation tests validation of the [error_handling] section
+func TestErrorHandlingConfig_Validation(t *testing.T) {
+	cfg := validConfig()
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: true, ConfigFile: "", DefaultMediaType: "application/json"}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "error_handling.config_file")
+
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: true, ConfigFile: "conf/error-responses.yaml", DefaultMediaType: ""}
+	err = cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "error_handling.default_media_type")
+
+	cfg.ErrorHandling = ErrorHandlingConfig{Enabled: false}
+	assert.NoError(t, cfg.Validate())
+}

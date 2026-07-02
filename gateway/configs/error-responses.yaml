@@ -1,0 +1,57 @@
+# =============================================================================
+# GATEWAY ERROR-RESPONSE CUSTOMIZATION (sample)
+# =============================================================================
+# Customizes the bodies and status codes of gateway error responses.
+# Enable it via config.toml:
+#
+#   [error_handling]
+#   enabled = true
+#   config_file = "conf/error-responses.yaml"
+#   default_media_type = "application/json"
+#
+# The document is an OpenAPI 3.x Responses Object: entries are keyed by a
+# 3-digit HTTP status code ("401") or "default" (any error status not listed).
+# Each entry may define:
+#   description             documentation only
+#   x-status-code-override  return a different status than the entry's key
+#   content                 media types negotiated against the request Accept
+#                           header; the gateway renders the media type's
+#                           `example` (schema is descriptive only)
+#
+# Placeholders substituted into example string values:
+#   {{statusCode}} {{message}} {{errorCode}} {{category}} {{requestId}}
+#   {{apiName}} {{apiVersion}}
+#
+# Precedence per status code: per-API errorResponses > this file's exact
+# status entry > this file's `default` entry > built-in gateway response.
+# =============================================================================
+#
+# responses:
+#   "401":
+#     description: Authentication failure
+#     content:
+#       application/json:
+#         example: { code: 401, message: "Authentication required", requestId: "{{requestId}}" }
+#       application/xml:
+#         example: "<error><code>401</code><message>Authentication required</message></error>"
+#   "429":
+#     description: Rate limit exceeded
+#     content:
+#       application/json:
+#         example: { code: 429, message: "Too many requests" }
+#   "503":
+#     description: Backend unavailable
+#     content:
+#       application/json:
+#         example: { code: 503, message: "Service temporarily unavailable" }
+#   "504":
+#     description: Upstream timeout
+#     x-status-code-override: 502            # optionally remap 504 -> 502
+#     content:
+#       application/json:
+#         example: { code: 502, message: "Upstream did not respond in time" }
+#   default:
+#     description: Fallback for any error status not explicitly listed
+#     content:
+#       application/json:
+#         example: { code: "{{statusCode}}", message: "{{message}}", requestId: "{{requestId}}" }

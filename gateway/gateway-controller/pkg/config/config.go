@@ -53,6 +53,23 @@ type Config struct {
 	// When nil, subscription validation system policy remains disabled.
 	Subscriptions    *SubscriptionsConfig   `koanf:"subscriptions"`
 	ImmutableGateway ImmutableGatewayConfig `koanf:"immutable_gateway"`
+	ErrorHandling    ErrorHandlingConfig    `koanf:"error_handling"`
+}
+
+// ErrorHandlingConfig holds global error-response customization settings.
+// The policy engine consumes this to shape gateway-generated errors; the
+// controller parses it now for the later Envoy local-reply injection
+// (error-response-customization plan, Phase 2). Not applied anywhere yet.
+type ErrorHandlingConfig struct {
+	// Enabled toggles error-response customization on/off
+	Enabled bool `koanf:"enabled"`
+
+	// ConfigFile is the path to the OpenAPI-shaped error-responses YAML file
+	ConfigFile string `koanf:"config_file"`
+
+	// DefaultMediaType is the media type rendered when the request Accept
+	// header matches none of a response entry's content media types
+	DefaultMediaType string `koanf:"default_media_type"`
 }
 
 // AnalyticsConfig holds analytics configuration
@@ -791,6 +808,11 @@ func defaultConfig() *Config {
 			Enabled:      false,
 			ArtifactsDir: "/etc/api-platform-gateway/immutable_gateway/artifacts",
 		},
+		ErrorHandling: ErrorHandlingConfig{
+			Enabled:          false,
+			ConfigFile:       "conf/error-responses.yaml",
+			DefaultMediaType: "application/json",
+		},
 	}
 }
 
@@ -802,6 +824,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("immutable_gateway.enabled=true requires storage.type=sqlite; got %q. "+
 			"Immutable mode starts with a fresh in-container database on every boot and is incompatible with external databases",
 			c.Controller.Storage.Type)
+	}
+
+	if c.ErrorHandling.Enabled {
+		if c.ErrorHandling.ConfigFile == "" {
+			return fmt.Errorf("error_handling.config_file is required when error_handling is enabled")
+		}
+		if c.ErrorHandling.DefaultMediaType == "" {
+			return fmt.Errorf("error_handling.default_media_type is required when error_handling is enabled")
+		}
 	}
 
 	// Validate storage type

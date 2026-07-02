@@ -38,6 +38,7 @@ import (
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/constants"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/executor"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel"
+	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/kernel/errorformat"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/metrics"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/pkg/cel"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/pythonbridge"
@@ -125,6 +126,29 @@ func main() {
 			"config_mode", cfg.PolicyEngine.ConfigMode.Mode,
 			"server_mode", serverMode,
 			"extproc_port", cfg.PolicyEngine.Server.ExtProcPort)
+	}
+
+	// Parse the global error-response customization config, if enabled.
+	// Phase 0: parse + validate only — nothing applies it yet.
+	if cfg.ErrorHandling.Enabled {
+		if err := errorformat.ValidateMediaTypeName(cfg.ErrorHandling.DefaultMediaType); err != nil {
+			slog.ErrorContext(ctx, "Invalid error_handling.default_media_type", "error", err)
+			os.Exit(1)
+		}
+		globalErrorResponses, err := errorformat.LoadFile(cfg.ErrorHandling.ConfigFile)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to load error-response customization config", "error", err)
+			os.Exit(1)
+		}
+		statusKeys := make([]string, 0, len(globalErrorResponses.Responses))
+		for key := range globalErrorResponses.Responses {
+			statusKeys = append(statusKeys, key)
+		}
+		slog.InfoContext(ctx, "Error-response customization config parsed (not applied yet)",
+			"config_file", cfg.ErrorHandling.ConfigFile,
+			"default_media_type", cfg.ErrorHandling.DefaultMediaType,
+			"response_entries", len(globalErrorResponses.Responses),
+			"status_keys", statusKeys)
 	}
 
 	// Initialize tracing (if enabled in config)
