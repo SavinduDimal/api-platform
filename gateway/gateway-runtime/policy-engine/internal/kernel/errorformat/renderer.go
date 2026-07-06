@@ -26,7 +26,7 @@ import (
 )
 
 // PlaceholderValues carries the request-scoped values substituted into
-// example bodies ({{statusCode}}, {{message}}, ... — design §4.4). Values are
+// example bodies (${statusCode}, ${message}, ... — design §4.4). Values are
 // escaped for the target media type at substitution time, so callers pass
 // them raw.
 type PlaceholderValues struct {
@@ -119,16 +119,16 @@ func substituteAny(value any, vals PlaceholderValues) any {
 	}
 }
 
-// substitutePlaceholders replaces whitelisted {{placeholder}} tokens in s.
+// substitutePlaceholders replaces whitelisted ${placeholder} tokens in s.
 // Unknown placeholders are left untouched (they are rejected at parse time
 // anyway). The escape function is applied to the substituted values only,
 // never to the surrounding template text.
 func substitutePlaceholders(s string, vals PlaceholderValues, escape func(string) string) string {
-	if !strings.Contains(s, "{{") {
+	if !strings.Contains(s, "${") {
 		return s
 	}
 	return placeholderPattern.ReplaceAllStringFunc(s, func(match string) string {
-		name := strings.TrimSpace(match[2 : len(match)-2])
+		name := strings.TrimSpace(match[2 : len(match)-1])
 		var value string
 		switch name {
 		case "statusCode":

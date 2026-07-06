@@ -83,7 +83,7 @@ Goal: gateway-generated `ImmediateResponse` errors (auth/throttle/no-route-chain
     2. apply `x-status-code-override` if present.
     3. negotiate media type from `Accept` → `default_media_type` → first.
     4. render `example` with placeholder substitution (`renderer.go`), escaped per media type, size-capped.
-- `renderer.go`: whitelist placeholders (`{{statusCode}}`, `{{message}}`, `{{errorCode}}`, `{{category}}`, `{{requestId}}`, `{{apiName}}`, `{{apiVersion}}`); JSON- vs XML-escape.
+- `renderer.go`: whitelist placeholders (`${statusCode}`, `${message}`, `${errorCode}`, `${category}`, `${requestId}`, `${apiName}`, `${apiVersion}`); JSON- vs XML-escape.
 - Tests: negotiation matrix, override, `default` fallback, unmatched passthrough, escaping.
 
 #### 1A.2 `applyErrorFormat` choke-point function  [E]

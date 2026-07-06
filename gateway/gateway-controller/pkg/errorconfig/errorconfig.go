@@ -127,8 +127,13 @@ func (c Category) DefaultStatus() int {
 // (JSON-serialized size at validation time).
 const MaxExampleBytes = 16 * 1024
 
-// allowedPlaceholders is the whitelist of {{placeholder}} names that may
+// allowedPlaceholders is the whitelist of ${placeholder} names that may
 // appear in example bodies (design §4.4).
+//
+// The syntax is ${name} — NOT {{name}} — because API artifacts are rendered
+// through Go text/template (artifact templating: {{ env "..." }} etc.)
+// before YAML parsing; {{name}} in a per-API errorResponses block would be
+// rejected there as an unknown template function.
 var allowedPlaceholders = map[string]bool{
 	"statusCode": true,
 	"message":    true,
@@ -139,7 +144,7 @@ var allowedPlaceholders = map[string]bool{
 	"apiVersion": true,
 }
 
-var placeholderPattern = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+var placeholderPattern = regexp.MustCompile(`\$\{\s*([^{}$]+?)\s*\}`)
 
 // ValidateStatusKey checks a responses-map key: a 3-digit HTTP status code
 // in 100–599, or the literal "default".
@@ -184,7 +189,7 @@ func ValidateMediaTypeName(name string) error {
 }
 
 // ValidateExample checks an example body: bounded size and only whitelisted
-// {{placeholder}} names in its string values.
+// ${placeholder} names in its string values.
 func ValidateExample(example any) error {
 	serialized, err := json.Marshal(example)
 	if err != nil {
@@ -201,7 +206,7 @@ func validatePlaceholders(value any) error {
 	case string:
 		for _, match := range placeholderPattern.FindAllStringSubmatch(v, -1) {
 			if !allowedPlaceholders[match[1]] {
-				return fmt.Errorf("unknown placeholder {{%s}}: allowed placeholders are statusCode, message, errorCode, category, requestId, apiName, apiVersion", match[1])
+				return fmt.Errorf("unknown placeholder ${%s}: allowed placeholders are statusCode, message, errorCode, category, requestId, apiName, apiVersion", match[1])
 			}
 		}
 	case map[string]any:

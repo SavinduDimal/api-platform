@@ -42,6 +42,7 @@ services:
       - ./configs/config.toml:/etc/gateway-controller/config.toml:ro
       - ./gateway-controller/certificates:/app/certificates  # Read-write for dynamic certificate management
       - ./gateway-controller/listener-certs:/app/listener-certs:ro  # Read-only for HTTPS listener certificates
+      - ./configs/error-responses.test.yaml:/etc/gateway/error-responses.yaml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -68,6 +69,7 @@ services:
     volumes:
       - ./configs/config.toml:/etc/policy-engine/config.toml:ro
       - ./configs/llm-pricing/model_prices.json:/etc/policy-engine/llm-pricing/model_prices.json:ro
+      - ./configs/error-responses.test.yaml:/etc/gateway/error-responses.yaml:ro
     networks:
       - gateway-network
 

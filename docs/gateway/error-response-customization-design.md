@@ -153,7 +153,7 @@ responses:
     content:
       application/json:
         schema: { $ref: "#/components/schemas/Error" }
-        example: { code: 401, message: "Authentication required", requestId: "{{requestId}}" }
+        example: { code: 401, message: "Authentication required", requestId: "${requestId}" }
       application/xml:
         example: "<error><code>401</code><message>Authentication required</message></error>"
   "429":
@@ -176,7 +176,7 @@ responses:
     description: Fallback for any error status not explicitly listed
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}", requestId: "{{requestId}}" }
+        example: { code: "${statusCode}", message: "${message}", requestId: "${requestId}" }
 components:
   schemas:
     Error:
@@ -219,7 +219,8 @@ spec:
 
 The rendered body comes from the negotiated media type's `example` (serialized to the media type: JSON for `application/*json`, string for XML/text). A minimal, safe placeholder syntax (no arbitrary code execution) is substituted into `example` string values:
 
-- `{{statusCode}}`, `{{message}}`, `{{errorCode}}`, `{{category}}`, `{{requestId}}`, `{{apiName}}`, `{{apiVersion}}`.
+- `${statusCode}`, `${message}`, `${errorCode}`, `${category}`, `${requestId}`, `${apiName}`, `${apiVersion}`.
+- **Syntax note (implementation decision, 2026-07-03):** the placeholder syntax is `${name}`, not `{{name}}` as originally sketched. Management-API payloads and filesystem artifacts are rendered through Go `text/template` (artifact templating: `{{ env "..." }}` — see `artifact-templating.md`) *before* YAML parsing, so `{{name}}` in a per-API `errorResponses` block is rejected there as an unknown template function. `${name}` passes through untouched.
 - **Media type** chosen by: request `Accept` header match against the entry's `content` keys → global `default_media_type` → the entry's first media type.
 - Placeholder values are escaped per media type (JSON-escape vs XML-escape) to avoid injection; body size is capped.
 - `schema` is descriptive only (documents/validates the shape); the gateway does not synthesize a body from `schema`.

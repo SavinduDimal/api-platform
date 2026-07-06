@@ -39,7 +39,7 @@ responses:
   "401":
     content:
       application/json:
-        example: { code: 401, message: "Global auth required", requestId: "{{requestId}}" }
+        example: { code: 401, message: "Global auth required", requestId: "${requestId}" }
       application/xml:
         example: "<error><message>Global auth required</message></error>"
   "429":
@@ -50,11 +50,11 @@ responses:
     x-status-code-override: 502
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}" }
+        example: { code: "${statusCode}", message: "${message}" }
   default:
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}", category: "{{category}}" }
+        example: { code: "${statusCode}", message: "${message}", category: "${category}" }
 `)
 }
 
@@ -290,7 +290,7 @@ responses:
 
 func TestRenderExample_JSONEscaping(t *testing.T) {
 	body, err := renderExample(
-		map[string]any{"message": "{{message}}"},
+		map[string]any{"message": "${message}"},
 		"application/json",
 		PlaceholderValues{Message: `quote " backslash \ <tag>`},
 	)
@@ -308,7 +308,7 @@ func TestRenderExample_JSONEscaping(t *testing.T) {
 
 func TestRenderExample_StringTemplateJSONEscaping(t *testing.T) {
 	body, err := renderExample(
-		`{"message": "{{message}}"}`,
+		`{"message": "${message}"}`,
 		"application/json",
 		PlaceholderValues{Message: `break " out`},
 	)
@@ -326,7 +326,7 @@ func TestRenderExample_StringTemplateJSONEscaping(t *testing.T) {
 
 func TestRenderExample_XMLEscaping(t *testing.T) {
 	body, err := renderExample(
-		"<error><message>{{message}}</message></error>",
+		"<error><message>${message}</message></error>",
 		"application/xml",
 		PlaceholderValues{Message: `<script>&"'`},
 	)
@@ -344,7 +344,7 @@ func TestRenderExample_XMLEscaping(t *testing.T) {
 
 func TestRenderExample_TextPlain(t *testing.T) {
 	body, err := renderExample(
-		"error {{statusCode}}: {{message}}",
+		"error ${statusCode}: ${message}",
 		"text/plain",
 		PlaceholderValues{StatusCode: 429, Message: "slow down"},
 	)
@@ -360,7 +360,7 @@ func TestRenderExample_NestedStructure(t *testing.T) {
 	body, err := renderExample(
 		map[string]any{
 			"error": map[string]any{
-				"details": []any{"api {{apiName}}", "version {{apiVersion}}"},
+				"details": []any{"api ${apiName}", "version ${apiVersion}"},
 			},
 		},
 		"application/json",

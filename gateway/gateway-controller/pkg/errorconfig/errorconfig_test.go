@@ -127,9 +127,9 @@ func TestValidateMediaTypeName(t *testing.T) {
 
 func TestValidateExample(t *testing.T) {
 	valid := []any{
-		map[string]any{"code": 401, "message": "Authentication required", "requestId": "{{requestId}}"},
-		"plain body with {{statusCode}} and {{message}}",
-		[]any{"a", map[string]any{"b": "{{apiName}}"}},
+		map[string]any{"code": 401, "message": "Authentication required", "requestId": "${requestId}"},
+		"plain body with ${statusCode} and ${message}",
+		[]any{"a", map[string]any{"b": "${apiName}"}},
 	}
 	for _, ex := range valid {
 		if err := ValidateExample(ex); err != nil {
@@ -137,10 +137,10 @@ func TestValidateExample(t *testing.T) {
 		}
 	}
 
-	if err := ValidateExample("{{notAPlaceholder}}"); err == nil || !strings.Contains(err.Error(), "unknown placeholder") {
+	if err := ValidateExample("${notAPlaceholder}"); err == nil || !strings.Contains(err.Error(), "unknown placeholder") {
 		t.Errorf("expected unknown-placeholder error, got %v", err)
 	}
-	if err := ValidateExample(map[string]any{"nested": []any{"{{bad}}"}}); err == nil || !strings.Contains(err.Error(), "unknown placeholder") {
+	if err := ValidateExample(map[string]any{"nested": []any{"${bad}"}}); err == nil || !strings.Contains(err.Error(), "unknown placeholder") {
 		t.Errorf("expected nested unknown-placeholder error, got %v", err)
 	}
 	if err := ValidateExample(strings.Repeat("a", MaxExampleBytes+1)); err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {

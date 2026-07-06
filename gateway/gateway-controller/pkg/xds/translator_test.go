@@ -1587,7 +1587,7 @@ func TestTranslator_CreateListener_HTTP(t *testing.T) {
 	cfg.Router = *routerCfg
 	translator := NewTranslator(logger, routerCfg, nil, cfg)
 
-	listener, routeConfig, err := translator.createListener(nil, false)
+	listener, routeConfig, err := translator.createListener(nil, false, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, listener)
 	assert.NotNil(t, routeConfig)

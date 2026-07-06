@@ -23,10 +23,12 @@ import (
 	"strings"
 	"testing"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	policy "github.com/wso2/api-platform/sdk/core/policy/v1alpha2"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/config"
 	"github.com/wso2/api-platform/gateway/gateway-runtime/policy-engine/internal/executor"
@@ -39,13 +41,13 @@ responses:
   "401":
     content:
       application/json:
-        example: { code: 401, message: "Custom auth required", requestId: "{{requestId}}", api: "{{apiName}}" }
+        example: { code: 401, message: "Custom auth required", requestId: "${requestId}", api: "${apiName}" }
       application/xml:
         example: "<error><message>Custom auth required</message></error>"
   "500":
     content:
       application/json:
-        example: { code: 500, message: "Custom internal error", category: "{{category}}" }
+        example: { code: 500, message: "Custom internal error", category: "${category}" }
   "504":
     x-status-code-override: 502
     content:
@@ -414,4 +416,164 @@ func TestFormatErrorResponse_RawPath(t *testing.T) {
 	})
 	assert.Contains(t, string(out.Body), "Custom internal error")
 	assert.Equal(t, 500, out.StatusCode)
+}
+
+// =============================================================================
+// Backend error reshaping (source B, Phase 3)
+// =============================================================================
+
+const perAPIBackendDoc = `
+responses:
+  "500":
+    content:
+      application/json:
+        example: { code: 500, message: "Backend detail masked", api: "${apiName}" }
+`
+
+// backendReshapeExecCtx builds a full execution context (request + response
+// phases) the way the extproc server would, with an empty policy chain.
+func backendReshapeExecCtx(t *testing.T, perAPIDoc string, requestContentType string) *PolicyExecutionContext {
+	t.Helper()
+	k := NewKernel()
+	k.SetErrorFormatResolver(testErrorResolver(t))
+	chainExecutor := executor.NewChainExecutor(nil, nil, noop.NewTracerProvider().Tracer(""))
+	server := NewExternalProcessorServer(k, chainExecutor, config.TracingConfig{}, "")
+
+	execCtx := newPolicyExecutionContext(server, "test-route", &registry.PolicyChain{})
+	execCtx.errorResolver = k.ErrorFormatResolver()
+	if perAPIDoc != "" {
+		perAPI, err := errorformat.Parse([]byte(perAPIDoc))
+		require.NoError(t, err)
+		execCtx.perAPIErrorResponses = perAPI
+	}
+
+	reqHeaders := []*corev3.HeaderValue{}
+	if requestContentType != "" {
+		reqHeaders = append(reqHeaders, &corev3.HeaderValue{Key: "content-type", RawValue: []byte(requestContentType)})
+	}
+	execCtx.buildRequestContexts(&extprocv3.HttpHeaders{
+		Headers: &corev3.HeaderMap{Headers: reqHeaders},
+	}, RouteMetadata{APIName: "TestAPI", APIVersion: "v1.0"})
+	execCtx.sharedCtx.APIName = "TestAPI"
+	execCtx.sharedCtx.APIVersion = "v1.0"
+	return execCtx
+}
+
+func backendResponseHeaders(status string, extra ...*corev3.HeaderValue) *extprocv3.HttpHeaders {
+	headers := []*corev3.HeaderValue{
+		{Key: ":status", RawValue: []byte(status)},
+		{Key: "content-type", RawValue: []byte("text/plain")},
+		{Key: "x-backend-trace", RawValue: []byte("trace-1")},
+		{Key: "content-length", RawValue: []byte("11")},
+	}
+	headers = append(headers, extra...)
+	return &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: headers}}
+}
+
+func TestBackendReshape_OptedInReplacesResponse(t *testing.T) {
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "")
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("500"))
+	require.NoError(t, err)
+
+	immediate := resp.GetImmediateResponse()
+	require.NotNil(t, immediate, "opted-in backend 500 should become an immediate response")
+	assert.Equal(t, uint32(500), uint32(immediate.Status.Code))
+	body := string(immediate.Body)
+	assert.Contains(t, body, "Backend detail masked")
+	assert.Contains(t, body, `"api":"TestAPI"`)
+
+	// Non-framing backend headers are carried over; content-type is the
+	// negotiated one; content-length is not copied (Envoy recomputes).
+	headerValues := map[string]string{}
+	for _, h := range immediate.GetHeaders().GetSetHeaders() {
+		value := h.GetHeader().GetValue()
+		if value == "" {
+			value = string(h.GetHeader().GetRawValue())
+		}
+		headerValues[strings.ToLower(h.GetHeader().GetKey())] = value
+	}
+	assert.Equal(t, "trace-1", headerValues["x-backend-trace"])
+	assert.Equal(t, "application/json", headerValues["content-type"])
+	_, hasContentLength := headerValues["content-length"]
+	assert.False(t, hasContentLength, "stale content-length must not be copied")
+}
+
+func TestBackendReshape_NotOptedInPassthrough(t *testing.T) {
+	// No per-API doc: the GLOBAL config has a 500 entry (testGlobalErrorDoc),
+	// but backend reshaping is per-API opt-in — global alone must not apply.
+	execCtx := backendReshapeExecCtx(t, "", "")
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("500"))
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetImmediateResponse(), "global config must not reshape backend errors")
+	assert.NotNil(t, resp.GetResponseHeaders(), "backend response should pass through")
+}
+
+func TestBackendReshape_PerAPIDefaultDoesNotOptIn(t *testing.T) {
+	execCtx := backendReshapeExecCtx(t, `
+responses:
+  default:
+    content:
+      application/json:
+        example: { message: "catch-all" }
+`, "")
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("500"))
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetImmediateResponse(),
+		"a per-API 'default' entry must not opt in to backend reshaping (exact status required)")
+}
+
+func TestBackendReshape_DifferentStatusPassthrough(t *testing.T) {
+	// Opted in for 500 only; a backend 502 passes through.
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "")
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("502"))
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetImmediateResponse())
+}
+
+func TestBackendReshape_SuccessPassthrough(t *testing.T) {
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "")
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("200"))
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetImmediateResponse())
+}
+
+func TestBackendReshape_EnvoyLocalReplyPassthrough(t *testing.T) {
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "")
+
+	// The controller's local_reply_config marks Envoy-generated errors with
+	// the fault-flag header — those are source C, not backend errors.
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("500",
+		&corev3.HeaderValue{Key: "x-wso2-response-fault-flag", RawValue: []byte("UH")}))
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetImmediateResponse(), "Envoy local replies must pass through backend reshaping")
+}
+
+func TestBackendReshape_StreamingPassthrough(t *testing.T) {
+	// Streaming responses cannot be cleanly replaced (documented caveat).
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "")
+	execCtx.buildResponseContexts(backendResponseHeaders("500"))
+	execCtx.isStreamingResponse = true
+
+	_, ok := execCtx.backendErrorImmediateResponse()
+	assert.False(t, ok)
+}
+
+func TestBackendReshape_SOAPComposition(t *testing.T) {
+	execCtx := backendReshapeExecCtx(t, perAPIBackendDoc, "text/xml; charset=utf-8")
+	execCtx.sharedCtx.APIKind = policy.APIKind(apiKindSoapApi)
+
+	resp, err := execCtx.processResponseHeaders(context.Background(), backendResponseHeaders("500"))
+	require.NoError(t, err)
+
+	immediate := resp.GetImmediateResponse()
+	require.NotNil(t, immediate)
+	body := string(immediate.Body)
+	assert.Contains(t, body, "<faultcode>soap:Server</faultcode>")
+	// The customized message is carried into the fault detail.
+	assert.Contains(t, body, "Backend detail masked")
 }

@@ -416,6 +416,10 @@ func (t *Translator) TranslateConfigs(
 	allRoutes := make([]*route.Route, 0)
 	clusterMap := make(map[string]*cluster.Cluster)
 
+	// Per-API error-response customization for Envoy-generated errors,
+	// collected per config and applied as route-scoped local-reply mappers.
+	var perAPILocalReplies []perAPILocalReply
+
 	for _, cfg := range configs {
 		// Skip undeployed APIs - they should not appear in xDS routes
 		if cfg.DesiredState == models.StateUndeployed {
@@ -473,6 +477,24 @@ func (t *Translator) TranslateConfigs(
 		}
 
 		allRoutes = append(allRoutes, routesList...)
+
+		// Collect this API's errorResponses for per-API local replies.
+		if doc := t.errorResponsesDoc(cfg); doc != nil {
+			names := make([]string, 0, len(routesList))
+			for _, r := range routesList {
+				if r.Name != "" {
+					names = append(names, r.Name)
+				}
+			}
+			if len(names) > 0 {
+				perAPILocalReplies = append(perAPILocalReplies, perAPILocalReply{
+					apiUUID:    cfg.UUID,
+					routeNames: names,
+					doc:        doc,
+				})
+			}
+		}
+
 		// Add clusters (avoiding duplicates)
 		for _, c := range clusterList {
 			clusterMap[c.Name] = c
@@ -555,7 +577,7 @@ func (t *Translator) TranslateConfigs(
 	var sharedRouteConfig *route.RouteConfiguration
 
 	// Always create the HTTP listener, even with no APIs deployed
-	httpListener, routeConfig, err := t.createListener(virtualHosts, false)
+	httpListener, routeConfig, err := t.createListener(virtualHosts, false, perAPILocalReplies)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP listener: %w", err)
 	}
@@ -566,7 +588,7 @@ func (t *Translator) TranslateConfigs(
 	if t.routerConfig.HTTPSEnabled {
 		log.Info("HTTPS is enabled, creating HTTPS listener",
 			slog.Int("https_port", t.routerConfig.HTTPSPort))
-		httpsListener, _, err := t.createListener(virtualHosts, true)
+		httpsListener, _, err := t.createListener(virtualHosts, true, perAPILocalReplies)
 		if err != nil {
 			log.Error("Failed to create HTTPS listener", slog.Any("error", err))
 			return nil, fmt.Errorf("failed to create HTTPS listener: %w", err)
@@ -1078,7 +1100,7 @@ const SharedRouteConfigName = "shared_route_config"
 // createListener creates an Envoy listener with access logging
 // If isHTTPS is true, creates an HTTPS listener with TLS configuration
 // Uses RDS (Route Discovery Service) to share route configuration between listeners
-func (t *Translator) createListener(virtualHosts []*route.VirtualHost, isHTTPS bool) (*listener.Listener, *route.RouteConfiguration, error) {
+func (t *Translator) createListener(virtualHosts []*route.VirtualHost, isHTTPS bool, perAPILocalReplies []perAPILocalReply) (*listener.Listener, *route.RouteConfiguration, error) {
 	routeConfig := t.createRouteConfiguration(virtualHosts)
 
 	// Create router filter with typed config
@@ -1136,9 +1158,9 @@ func (t *Translator) createListener(virtualHosts []*route.VirtualHost, isHTTPS b
 		ServerName:                 t.routerConfig.HTTPListener.ServerHeaderValue,
 	}
 
-	// Customize Envoy-generated error bodies (503/504 local replies) from
-	// the global error-response configuration.
-	if localReply := t.buildLocalReplyConfig(); localReply != nil {
+	// Customize Envoy-generated error bodies (503/504 local replies): per-API
+	// route-scoped mappers first, then the global configuration.
+	if localReply := t.buildLocalReplyConfig(perAPILocalReplies); localReply != nil {
 		manager.LocalReplyConfig = localReply
 	}
 

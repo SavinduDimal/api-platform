@@ -31,22 +31,22 @@ responses:
   "404":
     content:
       application/json:
-        example: { code: 404, message: "No API matched", category: "{{category}}" }
+        example: { code: 404, message: "No API matched", category: "${category}" }
   "503":
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}" }
+        example: { code: "${statusCode}", message: "${message}" }
       application/xml:
-        example: "<error><message>{{message}}</message></error>"
+        example: "<error><message>${message}</message></error>"
   "504":
     x-status-code-override: 502
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "Upstream did not respond in time" }
+        example: { code: "${statusCode}", message: "Upstream did not respond in time" }
   default:
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}", requestId: "{{requestId}}" }
+        example: { code: "${statusCode}", message: "${message}", requestId: "${requestId}" }
 `
 
 func parseTestDoc(t *testing.T) *ErrorResponses {

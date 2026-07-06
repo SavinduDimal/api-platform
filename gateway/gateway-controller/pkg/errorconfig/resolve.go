@@ -41,10 +41,10 @@ type StaticResolution struct {
 //
 //   - There is no request Accept header — the media type is the configured
 //     default, falling back to the entry's first media type (sorted).
-//   - Only build-time placeholders are substituted: {{statusCode}},
-//     {{message}} (the HTTP status text) and {{category}}. Request-scoped
-//     placeholders ({{requestId}}, {{apiName}}, {{apiVersion}},
-//     {{errorCode}}) render as empty strings — Envoy local replies never
+//   - Only build-time placeholders are substituted: ${statusCode},
+//     ${message} (the HTTP status text) and ${category}. Request-scoped
+//     placeholders (${requestId}, ${apiName}, ${apiVersion},
+//     ${errorCode}) render as empty strings — Envoy local replies never
 //     reach the policy engine, so those values do not exist. Envoy's own
 //     %COMMAND% operators are a separate rendering context (see design
 //     docs).
@@ -183,11 +183,11 @@ func substituteStaticAny(value any, vals map[string]string) any {
 }
 
 func substituteStatic(s string, vals map[string]string, escape func(string) string) string {
-	if !strings.Contains(s, "{{") {
+	if !strings.Contains(s, "${") {
 		return s
 	}
 	return placeholderPattern.ReplaceAllStringFunc(s, func(match string) string {
-		name := strings.TrimSpace(match[2 : len(match)-2])
+		name := strings.TrimSpace(match[2 : len(match)-1])
 		value, ok := vals[name]
 		if !ok {
 			return match

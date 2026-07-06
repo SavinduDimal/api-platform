@@ -1,0 +1,509 @@
+{
+  "info": {
+    "name": "WSO2 API Platform — Error Response Customization",
+    "description": "Exercises gateway error-response customization end-to-end: global + per-API policy errors (source A), backend error reshaping (source B), Envoy local replies and the no-route 404 (source C), and SOAP fault composition.\n\nPrerequisites (see docs/gateway/error-response-customization-testing-plan.md, Step 1):\n- Gateway up (docker compose up -d) — management on :9090, router on :8080\n- [error_handling] enabled in configs/config.toml with the testing plan's error-responses.test.yaml mounted at /etc/gateway/error-responses.yaml (the assertions below match that file's bodies verbatim)\n- The testing plan's Python mock backend running on host :3005 (reachable from the router as host.docker.internal:3005) — /ok → 200, /boom → 500 with a revealing body\n\nRun top-to-bottom (Collection Runner or `newman run`). Folder 1 deploys the APIs and saves an API key; later folders depend on them. The Cleanup folder removes everything.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "mgmtUrl", "value": "http://localhost:9090/api/management/v0.9", "type": "string" },
+    { "key": "gwUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "adminUser", "value": "admin", "type": "string" },
+    { "key": "adminPass", "value": "admin", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "basic",
+    "basic": [
+      { "key": "username", "value": "{{adminUser}}", "type": "string" },
+      { "key": "password", "value": "{{adminPass}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Management — Deploy & Inspect",
+      "item": [
+        {
+          "name": "Deploy ErrDemo (api-key-auth, global errors apply)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemo\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005\" } },\n    \"policies\": [\n      { \"name\": \"api-key-auth\", \"version\": \"v1\", \"params\": { \"key\": \"X-API-Key\", \"in\": \"header\" } }\n    ],\n    \"operations\": [\n      { \"method\": \"GET\", \"path\": \"/ok\" },\n      { \"method\": \"GET\", \"path\": \"/boom\" }\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 Created (or 409 already deployed)', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+              "if (pm.response.code === 201) {",
+              "  pm.test('deployed', () => pm.expect(pm.response.json().status.state).to.eql('deployed'));",
+              "}"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoThrottle (1 req/min → 429 via default entry)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-throttle-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoThrottle\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-throttle/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005\" } },\n    \"policies\": [\n      { \"name\": \"basic-ratelimit\", \"version\": \"v1\", \"params\": { \"limits\": [ { \"requests\": 1, \"duration\": \"1m\" } ] } }\n    ],\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/ok\" } ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoPerAPI (per-API 401 override)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-perapi-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoPerAPI\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-perapi/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005\" } },\n    \"policies\": [\n      { \"name\": \"api-key-auth\", \"version\": \"v1\", \"params\": { \"key\": \"X-API-Key\", \"in\": \"header\" } }\n    ],\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/ok\" } ],\n    \"errorResponses\": {\n      \"responses\": {\n        \"401\": {\n          \"description\": \"Custom auth message for this API only\",\n          \"content\": {\n            \"application/json\": { \"example\": { \"error\": \"Provide a valid API key for ErrDemoPerAPI\", \"hint\": \"see docs\" } }\n          }\n        }\n      }\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoDead (unreachable upstream → global 503)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-dead-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoDead\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-dead/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3999\" } },\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/ok\" } ]\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoReshape (backend 500 masked — opt-in)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-reshape-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoReshape\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-reshape/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005\" } },\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/boom\" } ],\n    \"errorResponses\": {\n      \"responses\": {\n        \"500\": {\n          \"description\": \"Mask backend internals\",\n          \"content\": {\n            \"application/json\": { \"example\": { \"code\": 500, \"message\": \"Something went wrong on our side\", \"api\": \"${apiName}\" } }\n          }\n        }\n      }\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "// ${apiName} inside the body is a GATEWAY placeholder (rendered per request by the",
+              "// policy engine). Postman variables use {{...}}, so there is no collision."
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoPerAPI503 (per-API Envoy local reply)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-perapi503-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoPerAPI503\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-perapi503/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3999\" } },\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/ok\" } ],\n    \"errorResponses\": {\n      \"responses\": {\n        \"503\": {\n          \"content\": {\n            \"application/json\": { \"example\": { \"error\": \"ErrDemoPerAPI503 backend is down, try later\" } }\n          }\n        }\n      }\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Deploy ErrDemoSoap (SOAP fault composition)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/soap-apis", "host": ["{{mgmtUrl}}"], "path": ["soap-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"SoapApi\",\n  \"metadata\": { \"name\": \"errdemo-soap-v1\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoSoap\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-soap/v1\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005/ok\" } },\n    \"policies\": [\n      { \"name\": \"api-key-auth\", \"version\": \"v1\", \"params\": { \"key\": \"X-API-Key\", \"in\": \"header\" } }\n    ],\n    \"errorResponses\": {\n      \"responses\": {\n        \"401\": {\n          \"content\": {\n            \"application/json\": { \"example\": { \"error\": \"SOAP callers must present an API key\" } }\n          }\n        }\n      }\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Validation rejects bad errorResponses (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis", "host": ["{{mgmtUrl}}"], "path": ["rest-apis"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiVersion\": \"gateway.api-platform.wso2.com/v1alpha1\",\n  \"kind\": \"RestApi\",\n  \"metadata\": { \"name\": \"errdemo-bad\" },\n  \"spec\": {\n    \"displayName\": \"ErrDemoBad\",\n    \"version\": \"v1.0\",\n    \"context\": \"/errdemo-bad/v1.0\",\n    \"upstream\": { \"main\": { \"url\": \"http://host.docker.internal:3005\" } },\n    \"operations\": [ { \"method\": \"GET\", \"path\": \"/ok\" } ],\n    \"errorResponses\": {\n      \"responses\": {\n        \"9xx\": {\n          \"content\": {\n            \"application/json\": { \"example\": { \"error\": \"bad key\" } }\n          }\n        }\n      }\n    }\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('names the invalid response key', () => pm.expect(pm.response.text()).to.include('invalid response key'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Create API key (saves {{apiKey}})",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-v1/api-keys", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-v1", "api-keys"] },
+            "body": { "mode": "raw", "raw": "{ \"name\": \"postman-key\" }" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const key = pm.response.json().apiKey;",
+              "pm.test('returns an apiKey', () => pm.expect(key).to.be.a('string').and.not.empty);",
+              "pm.collectionVariables.set('apiKey', key);"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Source A — Global policy errors",
+      "item": [
+        {
+          "name": "Unauthenticated → customized 401 (JSON)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "pm.test('JSON content type', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
+              "const j = pm.response.json();",
+              "pm.test('customized message', () => pm.expect(j.message).to.eql('Custom auth required'));",
+              "pm.test('${requestId} substituted with a real id', () => pm.expect(j.requestId).to.be.a('string').and.not.empty);",
+              "pm.test('${apiName} substituted', () => pm.expect(j.api).to.eql('ErrDemo'));",
+              "pm.test('NOT the built-in body', () => pm.expect(pm.response.text()).to.not.include('{\"error\"'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Accept: application/xml → XML variant",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/xml" } ],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "pm.test('XML content type', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/xml'));",
+              "pm.test('XML body', () => pm.expect(pm.response.text()).to.include('<error><code>401</code><message>Custom auth required</message></error>'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Throttle warm-up (expect 200; 429 if re-run within 1m)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-throttle/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo-throttle", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 (or 429 when re-run inside the window)', () => pm.expect(pm.response.code).to.be.oneOf([200, 429]));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Throttled → 429 rendered by the default entry",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-throttle/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo-throttle", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('429', () => pm.response.to.have.status(429));",
+              "const j = pm.response.json();",
+              "pm.test('default entry: ${statusCode} = 429', () => pm.expect(j.code).to.eql('429'));",
+              "pm.test('default entry: ${message} = HTTP status text', () => pm.expect(j.message).to.eql('Too Many Requests'));",
+              "pm.test('default entry: ${category} = THROTTLED', () => pm.expect(j.category).to.eql('THROTTLED'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Valid API key → 200, response untouched",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [ { "key": "X-API-Key", "value": "{{apiKey}}" } ],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "pm.test('backend body untouched', () => pm.expect(pm.response.json().ok).to.eql(true));",
+              "pm.test('backend header untouched', () => pm.expect(pm.response.headers.get('X-Backend-Trace')).to.eql('trace-123'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Source A — Per-API override",
+      "item": [
+        {
+          "name": "Per-API 401 beats the global entry",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-perapi/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo-perapi", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "const j = pm.response.json();",
+              "pm.test('per-API body', () => pm.expect(j.error).to.eql('Provide a valid API key for ErrDemoPerAPI'));",
+              "pm.test('per-API hint present', () => pm.expect(j.hint).to.eql('see docs'));",
+              "pm.test('NOT the global body', () => pm.expect(pm.response.text()).to.not.include('Custom auth required'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Neighbor API still gets the global 401 (per-status isolation)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "pm.test('global body on the other API', () => pm.expect(pm.response.json().message).to.eql('Custom auth required'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Source C — Envoy local replies & no-route 404",
+      "item": [
+        {
+          "name": "No-route → customized 404",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/no/such/api", "host": ["{{gwUrl}}"], "path": ["no", "such", "api"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('404', () => pm.response.to.have.status(404));",
+              "pm.test('JSON content type', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
+              "pm.test('customized body', () => pm.expect(pm.response.json().message).to.eql('No API matched this request'));",
+              "pm.test('NOT the built-in body', () => pm.expect(pm.response.text()).to.not.include('Not Found'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Unreachable backend → customized global 503 + fault flag",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-dead/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo-dead", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('503', () => pm.response.to.have.status(503));",
+              "pm.test('customized global body', () => pm.expect(pm.response.json().message).to.eql('Backend unavailable (custom global)'));",
+              "pm.test('NOT Envoy default text', () => pm.expect(pm.response.text()).to.not.include('upstream connect error'));",
+              "const flag = pm.response.headers.get('x-wso2-response-fault-flag');",
+              "pm.test('fault-flag header carries the response flags', () => pm.expect(flag).to.be.a('string').and.not.empty);"
+            ] } }
+          ]
+        },
+        {
+          "name": "Per-API 503 local reply beats global (Phase 4)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-perapi503/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo-perapi503", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('503', () => pm.response.to.have.status(503));",
+              "pm.test('per-API 503 body', () => pm.expect(pm.response.json().error).to.eql('ErrDemoPerAPI503 backend is down, try later'));",
+              "pm.test('NOT the global 503 body', () => pm.expect(pm.response.text()).to.not.include('custom global'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Policy 401 NOT clobbered by local-reply mappers",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/ok", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "ok"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "// ext_proc immediate responses travel Envoy's local-reply path too;",
+              "// the flag-only mapper design must leave them alone.",
+              "pm.test('401 engine-rendered', () => pm.response.to.have.status(401));",
+              "const j = pm.response.json();",
+              "pm.test('requestId still request-scoped (engine rendering)', () => pm.expect(j.requestId).to.be.a('string').and.not.empty);",
+              "pm.test('no fault-flag header on policy errors', () => pm.expect(pm.response.headers.get('x-wso2-response-fault-flag')).to.be.oneOf([null, undefined]));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Source B — Backend error reshaping",
+      "item": [
+        {
+          "name": "Not opted in → backend 500 passes through",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [ { "key": "X-API-Key", "value": "{{apiKey}}" } ],
+            "url": { "raw": "{{gwUrl}}/errdemo/v1.0/boom", "host": ["{{gwUrl}}"], "path": ["errdemo", "v1.0", "boom"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('500 passthrough', () => pm.response.to.have.status(500));",
+              "pm.test('backend body untouched (global config must NOT reshape)', () => pm.expect(pm.response.text()).to.include('secret internal trace'));",
+              "pm.test('backend header untouched', () => pm.expect(pm.response.headers.get('X-Backend-Trace')).to.eql('trace-123'));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Opted in → backend 500 masked",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{gwUrl}}/errdemo-reshape/v1.0/boom", "host": ["{{gwUrl}}"], "path": ["errdemo-reshape", "v1.0", "boom"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('500', () => pm.response.to.have.status(500));",
+              "const j = pm.response.json();",
+              "pm.test('masked body', () => pm.expect(j.message).to.eql('Something went wrong on our side'));",
+              "pm.test('${apiName} substituted', () => pm.expect(j.api).to.eql('ErrDemoReshape'));",
+              "pm.test('backend internals GONE', () => pm.expect(pm.response.text()).to.not.include('secret internal trace'));",
+              "pm.test('non-framing backend header carried over', () => pm.expect(pm.response.headers.get('X-Backend-Trace')).to.eql('trace-123'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. SOAP composition",
+      "item": [
+        {
+          "name": "Unauthenticated SOAP → 401 fault carrying the custom message",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "text/xml; charset=utf-8" } ],
+            "url": { "raw": "{{gwUrl}}/errdemo-soap/v1", "host": ["{{gwUrl}}"], "path": ["errdemo-soap", "v1"] },
+            "body": { "mode": "raw", "raw": "<?xml version=\"1.0\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body><Ping/></soap:Body>\n</soap:Envelope>" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "pm.test('SOAP content type (not JSON)', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/xml'));",
+              "const body = pm.response.text();",
+              "pm.test('is a SOAP 1.1 fault', () => pm.expect(body).to.include('<faultcode>soap:Client</faultcode>'));",
+              "pm.test('custom message carried into the fault detail', () => pm.expect(body).to.include('SOAP callers must present an API key'));"
+            ] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Cleanup",
+      "item": [
+        {
+          "name": "Delete errdemo-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted (200/204) or already gone (404)', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-throttle-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-throttle-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-throttle-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-perapi-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-perapi-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-perapi-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-dead-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-dead-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-dead-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-reshape-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-reshape-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-reshape-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-perapi503-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/rest-apis/errdemo-perapi503-v1", "host": ["{{mgmtUrl}}"], "path": ["rest-apis", "errdemo-perapi503-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        },
+        {
+          "name": "Delete errdemo-soap-v1",
+          "request": { "method": "DELETE", "header": [], "url": { "raw": "{{mgmtUrl}}/soap-apis/errdemo-soap-v1", "host": ["{{mgmtUrl}}"], "path": ["soap-apis", "errdemo-soap-v1"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('deleted or already gone', () => pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]));"
+          ] } } ]
+        }
+      ]
+    }
+  ]
+}

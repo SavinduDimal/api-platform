@@ -1,0 +1,25 @@
+responses:
+  "401":
+    description: Authentication failure
+    content:
+      application/json:
+        example: { code: 401, message: "Custom auth required", requestId: "{{requestId}}", api: "{{apiName}}" }
+      application/xml:
+        example: "<error><code>401</code><message>Custom auth required</message></error>"
+  "404":
+    content:
+      application/json:
+        example: { code: 404, message: "No API matched this request" }
+  "503":
+    content:
+      application/json:
+        example: { code: 503, message: "Backend unavailable (custom global)" }
+  "504":
+    x-status-code-override: 502
+    content:
+      application/json:
+        example: { code: "{{statusCode}}", message: "Upstream timed out (custom global)" }
+  default:
+    content:
+      application/json:
+        example: { code: "{{statusCode}}", message: "{{message}}", category: "{{category}}", requestId: "{{requestId}}" }

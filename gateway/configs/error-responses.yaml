@@ -19,8 +19,11 @@
 #                           `example` (schema is descriptive only)
 #
 # Placeholders substituted into example string values:
-#   {{statusCode}} {{message}} {{errorCode}} {{category}} {{requestId}}
-#   {{apiName}} {{apiVersion}}
+#   ${statusCode} ${message} ${errorCode} ${category} ${requestId}
+#   ${apiName} ${apiVersion}
+# (The syntax is ${name}, not {{name}} — {{...}} is reserved by gateway
+# artifact templating, which renders API payloads through Go text/template
+# before parsing.)
 #
 # Precedence per status code: per-API errorResponses > this file's exact
 # status entry > this file's `default` entry > built-in gateway response.
@@ -28,17 +31,30 @@
 # TWO RENDERING CONTEXTS:
 # 1. Gateway policy errors (auth 401/403, throttle 429, policy 500, ...) are
 #    rendered PER REQUEST by the policy engine: Accept-header negotiation and
-#    all placeholders (including {{requestId}}/{{apiName}}/{{apiVersion}}).
+#    all placeholders (including ${requestId}/${apiName}/${apiVersion}).
 # 2. Envoy-generated errors never reach the policy engine and are rendered
 #    STATICALLY when configuration is deployed: the 503 entry applies to
 #    "backend unavailable" local replies (flags UH/UF/UO), the 504 entry to
 #    upstream timeouts (UT), and the 404 entry to the no-route response. No
 #    Accept negotiation (the default_media_type entry is used) and only
-#    {{statusCode}}/{{message}}/{{category}} carry values — request-scoped
+#    ${statusCode}/${message}/${category} carry values — request-scoped
 #    placeholders render as empty strings. 413 (payload too large) has no
 #    Envoy response flag and keeps its built-in body in this version. These
 #    responses also carry an x-wso2-response-fault-flag header with Envoy's
 #    response flags.
+#    An API's own errorResponses 503/504 entries also customize these local
+#    replies for that API's routes (matched by route name), taking precedence
+#    over this file — and applying even when this global file is disabled.
+#    The no-route 404 is inherently global (no API matched).
+#
+# BACKEND ERROR RESHAPING (opt-in, per API only): a backend's own 4xx/5xx
+# passes through untouched by default. An API opts in per status code by
+# defining an EXACT status entry in its own errorResponses (this global file
+# and a per-API "default" entry never reshape backend errors). When opted in,
+# the backend body is discarded and the configured example is rendered
+# per-request (context 1 above). Envoy local replies (identified by the
+# x-wso2-response-fault-flag header) and streaming responses always pass
+# through — a streamed error body cannot be cleanly replaced.
 # =============================================================================
 #
 # responses:
@@ -46,7 +62,7 @@
 #     description: Authentication failure
 #     content:
 #       application/json:
-#         example: { code: 401, message: "Authentication required", requestId: "{{requestId}}" }
+#         example: { code: 401, message: "Authentication required", requestId: "${requestId}" }
 #       application/xml:
 #         example: "<error><code>401</code><message>Authentication required</message></error>"
 #   "429":
@@ -69,4 +85,4 @@
 #     description: Fallback for any error status not explicitly listed
 #     content:
 #       application/json:
-#         example: { code: "{{statusCode}}", message: "{{message}}", requestId: "{{requestId}}" }
+#         example: { code: "${statusCode}", message: "${message}", requestId: "${requestId}" }

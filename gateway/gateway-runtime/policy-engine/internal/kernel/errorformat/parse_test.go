@@ -32,7 +32,7 @@ responses:
     content:
       application/json:
         schema: { $ref: "#/components/schemas/Error" }
-        example: { code: 401, message: "Authentication required", requestId: "{{requestId}}" }
+        example: { code: 401, message: "Authentication required", requestId: "${requestId}" }
       application/xml:
         example: "<error><code>401</code><message>Authentication required</message></error>"
   "429":
@@ -50,7 +50,7 @@ responses:
     description: Fallback
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}", requestId: "{{requestId}}" }
+        example: { code: "${statusCode}", message: "${message}", requestId: "${requestId}" }
 components:
   schemas:
     Error:
@@ -192,7 +192,7 @@ responses:
   "401":
     content:
       application/json:
-        example: { message: "{{bogusPlaceholder}}" }
+        example: { message: "${bogusPlaceholder}" }
 `,
 			wantErr: "unknown placeholder",
 		},
@@ -205,7 +205,7 @@ responses:
       application/json:
         example:
           error:
-            details: ["ok", "{{alsoBogus}}"]
+            details: ["ok", "${alsoBogus}"]
 `,
 			wantErr: "unknown placeholder",
 		},
@@ -246,7 +246,7 @@ responses:
       application/json:
         examples:
           short: { value: { message: "denied" } }
-          verbose: { value: { message: "denied", requestId: "{{requestId}}" } }
+          verbose: { value: { message: "denied", requestId: "${requestId}" } }
 `
 	parsed, err := Parse([]byte(doc))
 	if err != nil {

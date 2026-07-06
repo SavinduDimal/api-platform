@@ -23,7 +23,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	celfilter "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/filters/cel/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
@@ -32,6 +34,7 @@ import (
 
 	api "github.com/wso2/api-platform/gateway/gateway-controller/pkg/api/management"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/config"
+	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/errorconfig"
 	"github.com/wso2/api-platform/gateway/gateway-controller/pkg/models"
 )
 
@@ -40,16 +43,16 @@ responses:
   "404":
     content:
       application/json:
-        example: { code: 404, message: "No API matched this request", category: "{{category}}" }
+        example: { code: 404, message: "No API matched this request", category: "${category}" }
   "503":
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "Backend is unavailable" }
+        example: { code: "${statusCode}", message: "Backend is unavailable" }
   "504":
     x-status-code-override: 502
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "Upstream did not respond in time" }
+        example: { code: "${statusCode}", message: "Upstream did not respond in time" }
 `
 
 // errorHandlingTranslator builds a Translator with [error_handling] enabled
@@ -70,7 +73,7 @@ func errorHandlingTranslator(t *testing.T, doc string) *Translator {
 
 func TestBuildLocalReplyConfig_Disabled(t *testing.T) {
 	translator := NewTranslator(createTestLogger(), testRouterConfig(), nil, testConfig())
-	assert.Nil(t, translator.buildLocalReplyConfig(),
+	assert.Nil(t, translator.buildLocalReplyConfig(nil),
 		"no local_reply_config when error handling is disabled")
 }
 
@@ -82,7 +85,7 @@ func TestBuildLocalReplyConfig_InvalidFileDisablesCustomization(t *testing.T) {
 		DefaultMediaType: "application/json",
 	}
 	translator := NewTranslator(createTestLogger(), testRouterConfig(), nil, cfg)
-	assert.Nil(t, translator.buildLocalReplyConfig())
+	assert.Nil(t, translator.buildLocalReplyConfig(nil))
 
 	// The no-route response falls back to the built-in body.
 	status, contentType, body := translator.noRouteResponse()
@@ -93,7 +96,7 @@ func TestBuildLocalReplyConfig_InvalidFileDisablesCustomization(t *testing.T) {
 
 func TestBuildLocalReplyConfig_Mappers(t *testing.T) {
 	translator := errorHandlingTranslator(t, localReplyErrorDoc)
-	lrc := translator.buildLocalReplyConfig()
+	lrc := translator.buildLocalReplyConfig(nil)
 	require.NotNil(t, lrc)
 	require.Len(t, lrc.Mappers, 2)
 
@@ -129,7 +132,7 @@ responses:
       application/json:
         example: { message: "only 503" }
 `)
-	lrc := translator.buildLocalReplyConfig()
+	lrc := translator.buildLocalReplyConfig(nil)
 	require.NotNil(t, lrc)
 	require.Len(t, lrc.Mappers, 1)
 	assert.Equal(t, []string{"UH", "UF", "UO"}, lrc.Mappers[0].GetFilter().GetResponseFlagFilter().GetFlags())
@@ -141,9 +144,9 @@ responses:
   default:
     content:
       application/json:
-        example: { code: "{{statusCode}}", message: "{{message}}" }
+        example: { code: "${statusCode}", message: "${message}" }
 `)
-	lrc := translator.buildLocalReplyConfig()
+	lrc := translator.buildLocalReplyConfig(nil)
 	require.NotNil(t, lrc)
 	require.Len(t, lrc.Mappers, 2)
 	assert.Contains(t, lrc.Mappers[0].GetBody().GetInlineString(), `"code":"503"`)
@@ -156,7 +159,7 @@ responses:
 func TestCreateListener_LocalReplyConfig(t *testing.T) {
 	extractHCM := func(t *testing.T, translator *Translator) *hcm.HttpConnectionManager {
 		t.Helper()
-		listener, _, err := translator.createListener(nil, false)
+		listener, _, err := translator.createListener(nil, false, nil)
 		require.NoError(t, err)
 		for _, chain := range listener.FilterChains {
 			for _, filter := range chain.Filters {
@@ -252,4 +255,189 @@ func TestTranslateConfigs_NoRouteDirectResponse(t *testing.T) {
 		assert.Equal(t, uint32(404), dr.GetStatus())
 		assert.Equal(t, `{"error":"Not Found"}`, dr.GetBody().GetInlineString())
 	})
+}
+
+// =============================================================================
+// Per-API local replies (Phase 4)
+// =============================================================================
+
+const perAPILocalReplyDoc = `
+responses:
+  "503":
+    content:
+      application/json:
+        example: { code: "${statusCode}", message: "API-specific backend unavailable" }
+  "504":
+    x-status-code-override: 502
+    content:
+      application/json:
+        example: { message: "API-specific timeout" }
+`
+
+func parsePerAPIDoc(t *testing.T, doc string) *errorconfig.ErrorResponses {
+	t.Helper()
+	parsed, err := errorconfig.Parse([]byte(doc))
+	require.NoError(t, err)
+	return parsed
+}
+
+// celExpression extracts the CEL expression from a mapper's AndFilter.
+func celExpression(t *testing.T, mapper *hcm.ResponseMapper) string {
+	t.Helper()
+	and := mapper.GetFilter().GetAndFilter()
+	require.NotNil(t, and, "per-API mapper must use an AndFilter")
+	require.Len(t, and.GetFilters(), 2)
+	ext := and.GetFilters()[1].GetExtensionFilter()
+	require.NotNil(t, ext, "second AndFilter member must be the CEL extension filter")
+	assert.Equal(t, celAccessLogFilterName, ext.GetName())
+	expr := &celfilter.ExpressionFilter{}
+	require.NoError(t, ext.GetTypedConfig().UnmarshalTo(expr))
+	return expr.GetExpression()
+}
+
+func TestBuildLocalReplyConfig_PerAPIMappersPrecedeGlobal(t *testing.T) {
+	translator := errorHandlingTranslator(t, localReplyErrorDoc)
+
+	perAPI := []perAPILocalReply{{
+		apiUUID:    "api-1",
+		routeNames: []string{"POST|/calc/v1|v1.0|/*|main.local", "GET|/calc/v1|v1.0|/*|main.local"},
+		doc:        parsePerAPIDoc(t, perAPILocalReplyDoc),
+	}}
+
+	lrc := translator.buildLocalReplyConfig(perAPI)
+	require.NotNil(t, lrc)
+	// 2 per-API mappers (503, 504) followed by 2 global mappers.
+	require.Len(t, lrc.Mappers, 4)
+
+	// Per-API 503 mapper: AndFilter(flags, CEL route match), per-API body.
+	m503 := lrc.Mappers[0]
+	and := m503.GetFilter().GetAndFilter()
+	require.NotNil(t, and)
+	assert.Equal(t, []string{"UH", "UF", "UO"}, and.GetFilters()[0].GetResponseFlagFilter().GetFlags())
+	expr := celExpression(t, m503)
+	// Route names sorted, quoted, matched via xds.route_name.
+	assert.Equal(t, `xds.route_name in ["GET|/calc/v1|v1.0|/*|main.local", "POST|/calc/v1|v1.0|/*|main.local"]`, expr)
+	assert.Contains(t, m503.GetBody().GetInlineString(), "API-specific backend unavailable")
+	assert.Nil(t, m503.StatusCode)
+
+	// Per-API 504 mapper carries the override.
+	m504 := lrc.Mappers[1]
+	assert.Equal(t, []string{"UT"}, m504.GetFilter().GetAndFilter().GetFilters()[0].GetResponseFlagFilter().GetFlags())
+	require.NotNil(t, m504.StatusCode)
+	assert.Equal(t, uint32(502), m504.GetStatusCode().GetValue())
+	assert.Contains(t, m504.GetBody().GetInlineString(), "API-specific timeout")
+
+	// Global mappers follow (plain response-flag filters, global bodies).
+	g503 := lrc.Mappers[2]
+	assert.NotNil(t, g503.GetFilter().GetResponseFlagFilter())
+	assert.Contains(t, g503.GetBody().GetInlineString(), "Backend is unavailable")
+	g504 := lrc.Mappers[3]
+	assert.Equal(t, []string{"UT"}, g504.GetFilter().GetResponseFlagFilter().GetFlags())
+}
+
+func TestBuildLocalReplyConfig_PerAPIWithoutGlobal(t *testing.T) {
+	// [error_handling] disabled: per-API customization still applies,
+	// matching the engine-side per-API behavior.
+	translator := NewTranslator(createTestLogger(), testRouterConfig(), nil, testConfig())
+
+	perAPI := []perAPILocalReply{{
+		apiUUID:    "api-1",
+		routeNames: []string{"POST|/calc/v1|v1.0|/*|main.local"},
+		doc:        parsePerAPIDoc(t, perAPILocalReplyDoc),
+	}}
+
+	lrc := translator.buildLocalReplyConfig(perAPI)
+	require.NotNil(t, lrc)
+	require.Len(t, lrc.Mappers, 2, "per-API mappers only — no global mappers when disabled")
+	assert.NotNil(t, lrc.Mappers[0].GetFilter().GetAndFilter())
+}
+
+func TestBuildLocalReplyConfig_PerAPIIrrelevantEntriesSkipped(t *testing.T) {
+	// A per-API doc with only a 401 entry has nothing for Envoy-generated
+	// errors — no per-API mappers, no local_reply_config at all when the
+	// global config is also disabled.
+	translator := NewTranslator(createTestLogger(), testRouterConfig(), nil, testConfig())
+
+	perAPI := []perAPILocalReply{{
+		apiUUID:    "api-1",
+		routeNames: []string{"GET|/x|v1|/*|main.local"},
+		doc: parsePerAPIDoc(t, `
+responses:
+  "401":
+    content:
+      application/json:
+        example: { message: "auth only" }
+`),
+	}}
+
+	assert.Nil(t, translator.buildLocalReplyConfig(perAPI))
+}
+
+// TestTranslateConfigs_PerAPILocalReplies locks in the full pipeline: an API
+// deployed with errorResponses produces route-scoped local-reply mappers on
+// the generated listener's HCM.
+func TestTranslateConfigs_PerAPILocalReplies(t *testing.T) {
+	// Global error handling disabled — only the per-API doc drives mappers.
+	translator := NewTranslator(createTestLogger(), testRouterConfig(), nil, testConfig())
+
+	soapAPI := api.SoapAPI{
+		Kind:     api.SoapAPIKindSoapApi,
+		Metadata: api.Metadata{Name: "calc-v1"},
+		Spec: api.SoapAPIData{
+			DisplayName: "Calc",
+			Context:     "/calc/v1",
+			Version:     "v1.0",
+			Upstream: struct {
+				Main    api.Upstream  `json:"main" yaml:"main"`
+				Sandbox *api.Upstream `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
+			}{
+				Main: api.Upstream{Url: soapURL("http://backend:8080/svc")},
+			},
+			ErrorResponses: &api.ErrorResponses{
+				Responses: map[string]api.ErrorResponseObject{
+					"503": {
+						Content: map[string]api.ErrorResponseMediaType{
+							"application/json": {Example: map[string]interface{}{"error": "Calc backend down"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	stored := &models.StoredConfig{
+		UUID:          "calc-v1",
+		Kind:          string(api.SoapAPIKindSoapApi),
+		DesiredState:  models.StateDeployed,
+		Configuration: soapAPI,
+	}
+
+	resources, err := translator.TranslateConfigs([]*models.StoredConfig{stored}, "test")
+	require.NoError(t, err)
+
+	listeners := resources[resourcev3.ListenerType]
+	require.NotEmpty(t, listeners)
+
+	found := false
+	for _, res := range listeners {
+		l, ok := res.(*listenerv3.Listener)
+		require.True(t, ok)
+		for _, chain := range l.FilterChains {
+			for _, filter := range chain.Filters {
+				if filter.Name != wellknown.HTTPConnectionManager {
+					continue
+				}
+				manager := &hcm.HttpConnectionManager{}
+				require.NoError(t, filter.GetTypedConfig().UnmarshalTo(manager))
+				require.NotNil(t, manager.LocalReplyConfig, "per-API errorResponses must produce a local_reply_config")
+				require.Len(t, manager.LocalReplyConfig.Mappers, 1, "one mapper: the API's 503 entry")
+				mapper := manager.LocalReplyConfig.Mappers[0]
+				assert.Contains(t, mapper.GetBody().GetInlineString(), "Calc backend down")
+				expr := celExpression(t, mapper)
+				assert.Contains(t, expr, "POST|/calc/v1")
+				assert.Contains(t, expr, "GET|/calc/v1")
+				found = true
+			}
+		}
+	}
+	assert.True(t, found, "HCM with local_reply_config not found on any listener")
 }

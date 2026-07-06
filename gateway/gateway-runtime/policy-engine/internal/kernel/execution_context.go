@@ -683,6 +683,19 @@ func (ec *PolicyExecutionContext) processResponseHeaders(
 	// policies (OnResponseBody / OnResponseBodyChunk) observe the post-mutation headers.
 	applyResponseHeaderMutations(ec.responseHeaderCtx.ResponseHeaders, execResult.Results)
 
+	// Backend error reshaping (source B): when this API opts in via an exact
+	// errorResponses entry for the backend's error status, replace the
+	// backend response with a synthesized immediate response — the standard
+	// choke point in TranslateResponseHeaderActions then renders the
+	// configured body (and composes SOAP faults). Policy short-circuits take
+	// priority; Envoy local replies and streaming responses pass through.
+	if !execResult.ShortCircuited {
+		if imm, ok := ec.backendErrorImmediateResponse(); ok {
+			execResult.ShortCircuited = true
+			execResult.FinalAction = imm
+		}
+	}
+
 	// For bodyless responses Envoy skips the ResponseBody ext_proc phase entirely.
 	// Execute body policies inline now so they run on every response, receiving a nil body.
 	if !execResult.ShortCircuited && ec.policyChain.RequiresResponseBody && ec.responseHasNoBody() {

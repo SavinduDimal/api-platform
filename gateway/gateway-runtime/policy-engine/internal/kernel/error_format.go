@@ -19,6 +19,7 @@
 package kernel
 
 import (
+	"strconv"
 	"strings"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -32,6 +33,13 @@ import (
 // default (additive — no SDK change). It is consumed here and never reaches
 // the client.
 const errorCategoryHintHeader = "x-wso2-error-category"
+
+// faultFlagHeaderName marks a response as an Envoy-generated local reply
+// (added by the controller's local_reply_config mappers with
+// %RESPONSE_FLAGS%). Its presence tells the response phase that a 5xx did
+// NOT come from the backend, so backend error reshaping must pass it
+// through. Keep in sync with xds.FaultFlagHeaderName in the controller.
+const faultFlagHeaderName = "x-wso2-response-fault-flag"
 
 // applyErrorFormat rewrites an error ImmediateResponse according to the
 // error-response customization config (per-API override first, then global).
@@ -108,6 +116,69 @@ func formatErrorResponse(
 	immResp.Headers = headers
 	immResp.Body = res.Body
 	return immResp
+}
+
+// backendErrorImmediateResponse decides whether the current backend error
+// response should be reshaped (source B, design §4.3) and, if so, returns a
+// synthesized ImmediateResponse for the response-header short-circuit path —
+// the standard choke point (applyErrorFormat → applySOAPFaultFormat) then
+// renders the configured body.
+//
+// Reshaping is strictly OPT-IN per API: it requires an EXACT status entry in
+// this API's errorResponses document. The global configuration and the
+// per-API "default" entry never reshape backend responses (BACKEND_ERROR is
+// passthrough by default). Passthrough also applies to:
+//   - Envoy local replies (marked with the x-wso2-response-fault-flag header
+//     by the controller's local_reply_config) — those are source C;
+//   - streaming responses (the body is already flowing; a clean replacement
+//     is impossible — the documented streaming caveat).
+//
+// The upstream body is discarded (it never reaches the client), which is the
+// point: reshaping exists to mask backend error internals. Response headers
+// (post policy mutations) are carried over, minus body-framing headers.
+func (ec *PolicyExecutionContext) backendErrorImmediateResponse() (policy.ImmediateResponse, bool) {
+	var zero policy.ImmediateResponse
+	if ec.responseHeaderCtx == nil || ec.errorResolver == nil || ec.perAPIErrorResponses == nil {
+		return zero, false
+	}
+	if ec.isStreamingResponse {
+		return zero, false
+	}
+	status := ec.responseHeaderCtx.ResponseStatus
+	if status < 400 {
+		return zero, false
+	}
+	if _, optedIn := ec.perAPIErrorResponses.Responses[strconv.Itoa(status)]; !optedIn {
+		return zero, false
+	}
+	// An Envoy local reply is not a backend response — leave it alone.
+	if ec.responseHeaderCtx.ResponseHeaders != nil {
+		if flags := ec.responseHeaderCtx.ResponseHeaders.Get(faultFlagHeaderName); len(flags) > 0 && flags[0] != "" {
+			return zero, false
+		}
+	}
+
+	headers := make(map[string]string)
+	if ec.responseHeaderCtx.ResponseHeaders != nil {
+		for name, values := range ec.responseHeaderCtx.ResponseHeaders.GetAll() {
+			lower := strings.ToLower(name)
+			// Skip pseudo-headers and body-framing headers: the replacement
+			// body has different length/encoding, and content-type is
+			// re-negotiated by the resolver.
+			if strings.HasPrefix(lower, ":") {
+				continue
+			}
+			switch lower {
+			case "content-length", "content-encoding", "transfer-encoding", "connection":
+				continue
+			}
+			if len(values) > 0 {
+				headers[name] = values[0]
+			}
+		}
+	}
+
+	return policy.ImmediateResponse{StatusCode: status, Headers: headers}, true
 }
 
 // takeHeader removes a header (case-insensitively) from the response and

@@ -67,3 +67,24 @@ func TestRender_JSONWithTemplates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"key": "resolved", "other": "static"}`, string(result))
 }
+
+// TestRender_ErrorResponsePlaceholdersPassThrough locks in the contract the
+// error-response customization feature relies on: its ${placeholder} syntax
+// (e.g. ${statusCode} in a per-API errorResponses example) is NOT template
+// syntax and must survive artifact templating byte-for-byte. The feature
+// deliberately avoids {{name}}, which this engine would reject as an unknown
+// function.
+func TestRender_ErrorResponsePlaceholdersPassThrough(t *testing.T) {
+	raw := `
+spec:
+  errorResponses:
+    responses:
+      "401":
+        content:
+          application/json:
+            example: { error: "Denied", status: "${statusCode}", requestId: "${requestId}" }
+`
+	result, err := render([]byte(raw), template.FuncMap{})
+	require.NoError(t, err)
+	assert.Equal(t, raw, string(result))
+}

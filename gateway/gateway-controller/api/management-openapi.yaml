@@ -4570,7 +4570,7 @@ components:
         schema:
           description: Descriptive schema for the body (not used to synthesize a response).
         example:
-          description: The body rendered for this media type. String values may use whitelisted {{placeholder}} names.
+          description: The body rendered for this media type. String values may use whitelisted ${placeholder} names.
         examples:
           type: object
           description: Named examples; the default or first entry is rendered.

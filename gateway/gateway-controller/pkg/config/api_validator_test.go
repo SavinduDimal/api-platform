@@ -730,7 +730,7 @@ func validErrorResponses() *api.ErrorResponses {
 				Description: stringPtr("Custom auth message"),
 				Content: map[string]api.ErrorResponseMediaType{
 					"application/json": {
-						Example: map[string]interface{}{"error": "Provide a valid API key", "requestId": "{{requestId}}"},
+						Example: map[string]interface{}{"error": "Provide a valid API key", "requestId": "${requestId}"},
 					},
 				},
 			},
@@ -745,7 +745,7 @@ func validErrorResponses() *api.ErrorResponses {
 			"default": {
 				Content: map[string]api.ErrorResponseMediaType{
 					"application/json": {
-						Example: map[string]interface{}{"code": "{{statusCode}}", "message": "{{message}}"},
+						Example: map[string]interface{}{"code": "${statusCode}", "message": "${message}"},
 					},
 				},
 			},
@@ -861,7 +861,7 @@ func TestValidateErrorResponses_Invalid(t *testing.T) {
 		{
 			name: "unknown placeholder",
 			er: &api.ErrorResponses{Responses: map[string]api.ErrorResponseObject{
-				"401": {Content: jsonBody(map[string]interface{}{"m": "{{bogus}}"})},
+				"401": {Content: jsonBody(map[string]interface{}{"m": "${bogus}"})},
 			}},
 			wantMessage: "unknown placeholder",
 		},

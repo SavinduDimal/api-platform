@@ -49,3 +49,7 @@ pricing_file = "/etc/policy-engine/llm-pricing/model_prices.json"
 enabled = false
 artifacts_dir = "/etc/api-platform-gateway/immutable_gateway/artifacts"
 
+[error_handling]
+enabled = true
+config_file = "/etc/gateway/error-responses.yaml"
+default_media_type = "application/json"
