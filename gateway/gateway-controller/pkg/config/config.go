@@ -520,8 +520,9 @@ type VHostEntry struct {
 
 // HTTPListenerConfig holds HTTP listener related configuration of an API
 type HTTPListenerConfig struct {
-	ServerHeaderTransformation string `koanf:"server_header_transformation"` // Options: "APPEND_IF_ABSENT", "OVERWRITE", "PASS_THROUGH"
-	ServerHeaderValue          string `koanf:"server_header_value"`          // Custom value for the Server header
+	ServerHeaderTransformation    string `koanf:"server_header_transformation"`      // Options: "APPEND_IF_ABSENT", "OVERWRITE", "PASS_THROUGH"
+	ServerHeaderValue             string `koanf:"server_header_value"`               // Custom value for the Server header
+	PerConnectionBufferLimitBytes uint32 `koanf:"per_connection_buffer_limit_bytes"` // Downstream per-connection buffer limit in bytes
 }
 
 // PolicyEngineConfig holds policy engine ext_proc filter configuration
@@ -891,8 +892,9 @@ func defaultConfig() *Config {
 			},
 			TracingServiceName: "router",
 			HTTPListener: HTTPListenerConfig{
-				ServerHeaderTransformation: commonconstants.OVERWRITE,
-				ServerHeaderValue:          commonconstants.ServerName,
+				ServerHeaderTransformation:    commonconstants.OVERWRITE,
+				ServerHeaderValue:             commonconstants.ServerName,
+				PerConnectionBufferLimitBytes: 1048576, // 1 MiB, matches Envoy's built-in default
 			},
 		},
 		Analytics: AnalyticsConfig{
@@ -1847,6 +1849,16 @@ func (c *Config) validateHTTPListenerConfig() error {
 			commonconstants.OVERWRITE,
 			commonconstants.PASS_THROUGH,
 			httpListener.ServerHeaderTransformation)
+	}
+
+	// Set default value if not provided
+	if httpListener.PerConnectionBufferLimitBytes == 0 {
+		httpListener.PerConnectionBufferLimitBytes = 1048576 // 1 MiB, matches Envoy's built-in default
+	}
+
+	if httpListener.PerConnectionBufferLimitBytes > constants.MaxReasonableBufferLimitBytes {
+		return fmt.Errorf("http_listener.per_connection_buffer_limit_bytes must not exceed %d, got: %d",
+			constants.MaxReasonableBufferLimitBytes, httpListener.PerConnectionBufferLimitBytes)
 	}
 
 	return nil

@@ -69,8 +69,9 @@ const (
 	DefaultMatchID          = "0"
 
 	// Configuration Validation Constants
-	MaxReasonableTimeoutMs       = uint32(3600000) // 1 hour in milliseconds
-	MaxReasonablePolicyTimeoutMs = uint32(60000)   // 60 seconds in milliseconds
+	MaxReasonableTimeoutMs        = uint32(3600000)   // 1 hour in milliseconds
+	MaxReasonablePolicyTimeoutMs  = uint32(60000)     // 60 seconds in milliseconds
+	MaxReasonableBufferLimitBytes = uint32(104857600) // 100 MiB
 
 	// Cipher Suite Validation
 	CipherInvalidChars1 = ";"

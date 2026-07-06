@@ -369,7 +369,8 @@ func testRouterConfig() *config.RouterConfig {
 			Enabled: false,
 		},
 		HTTPListener: config.HTTPListenerConfig{
-			ServerHeaderTransformation: commonconstants.OVERWRITE,
+			ServerHeaderTransformation:    commonconstants.OVERWRITE,
+			PerConnectionBufferLimitBytes: 1048576,
 		},
 		LuaScriptPath: "../../lua/request_transformation.lua",
 	}
@@ -1592,6 +1593,21 @@ func TestTranslator_CreateListener_HTTP(t *testing.T) {
 	assert.NotNil(t, listener)
 	assert.NotNil(t, routeConfig)
 	assert.Contains(t, listener.Name, "8080")
+	assert.Equal(t, uint32(1048576), listener.GetPerConnectionBufferLimitBytes().GetValue())
+}
+
+func TestTranslator_CreateListener_PerConnectionBufferLimitBytes(t *testing.T) {
+	logger := createTestLogger()
+	routerCfg := testRouterConfig()
+	routerCfg.HTTPListener.PerConnectionBufferLimitBytes = 2097152
+	cfg := testConfig()
+	cfg.Router = *routerCfg
+	translator := NewTranslator(logger, routerCfg, nil, cfg)
+
+	listener, _, err := translator.createListener(nil, false)
+	assert.NoError(t, err)
+	assert.NotNil(t, listener)
+	assert.Equal(t, uint32(2097152), listener.GetPerConnectionBufferLimitBytes().GetValue())
 }
 
 func TestTranslator_CreateDownstreamTLSContext_NoCert(t *testing.T) {

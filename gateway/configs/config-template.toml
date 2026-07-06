@@ -211,6 +211,8 @@ connect_timeout_ms = 5000
 [router.http_listener]
 server_header_transformation = "OVERWRITE"
 server_header_value = "WSO2 API Platform"
+# Downstream per-connection buffer limit in bytes (default: 1048576 / 1 MiB)
+per_connection_buffer_limit_bytes = 1048576
 
 [router.policy_engine]
 host = "policy-engine"
