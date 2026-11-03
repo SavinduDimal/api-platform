@@ -433,7 +433,8 @@ func main() {
 	llmTransformer := transform.NewLLMTransformer(configStore, db, &cfg.Router, cfg, policyDefinitions, policyVersionResolver)
 	agentTransformer := transform.NewAgentTransformer(&cfg.Router, cfg, policyDefinitions)
 	graphqlTransformer := transform.NewGraphQLAPITransformer(&cfg.Router, cfg, policyDefinitions)
-	transformerRegistry := transform.NewRegistry(restTransformer, llmTransformer, agentTransformer, graphqlTransformer)
+	soapTransformer := transform.NewSoapAPITransformer(&cfg.Router, cfg, policyDefinitions)
+	transformerRegistry := transform.NewRegistry(restTransformer, llmTransformer, agentTransformer, graphqlTransformer, soapTransformer)
 
 	// Wire the transformer into the Envoy xDS translator so Envoy routes are built from the
 	// RuntimeDeployConfig (RDC) path — identical to how the policy engine's RouteConfig/PolicyChain
@@ -561,6 +562,8 @@ func main() {
 		runtimeStore,
 		secretsService,
 		transformerRegistry,
+		// Coercion needs only the policy definitions; the full validator is built later.
+		config.NewPolicyValidator(policyDefinitions, nil),
 		log,
 		cfg.Controller.Server.SkipInvalidDeploymentsOnStartup,
 		func(c *models.StoredConfig) error {
@@ -659,6 +662,7 @@ func main() {
 	// (see graphql_deployment.go's KindConfigValidator registration model), so it is
 	// wired via a package-level setter instead of a constructor argument.
 	utils.SetGraphQLPolicyValidator(policyValidator)
+	utils.SetSoapPolicyValidator(policyValidator)
 
 	// Build the single shared outbound *http.Client used by every control-plane /
 	// platform-API / on-prem-APIM call this process makes. Built once, here, and injected
@@ -1102,6 +1106,12 @@ func generateAuthConfig(config *config.Config) (commonmodels.AuthConfig, error) 
 		"PUT /graphql-apis/{id}":    {"admin", "developer"},
 		"DELETE /graphql-apis/{id}": {"admin", "developer"},
 
+		"POST /soap-apis":        {"admin", "developer"},
+		"GET /soap-apis":         {"admin", "developer"},
+		"GET /soap-apis/{id}":    {"admin", "developer"},
+		"PUT /soap-apis/{id}":    {"admin", "developer"},
+		"DELETE /soap-apis/{id}": {"admin", "developer"},
+
 		"POST /llm-provider-templates":        {"admin"},
 		"GET /llm-provider-templates":         {"admin"},
 		"GET /llm-provider-templates/{id}":    {"admin"},
@@ -1131,6 +1141,12 @@ func generateAuthConfig(config *config.Config) (commonmodels.AuthConfig, error) 
 		"PUT /graphql-apis/{id}/api-keys/{apiKeyName}":             {"admin", "consumer"},
 		"POST /graphql-apis/{id}/api-keys/{apiKeyName}/regenerate": {"admin", "consumer"},
 		"DELETE /graphql-apis/{id}/api-keys/{apiKeyName}":          {"admin", "consumer"},
+
+		"POST /soap-apis/{id}/api-keys":                         {"admin", "consumer"},
+		"GET /soap-apis/{id}/api-keys":                          {"admin", "consumer"},
+		"PUT /soap-apis/{id}/api-keys/{apiKeyName}":             {"admin", "consumer"},
+		"POST /soap-apis/{id}/api-keys/{apiKeyName}/regenerate": {"admin", "consumer"},
+		"DELETE /soap-apis/{id}/api-keys/{apiKeyName}":          {"admin", "consumer"},
 
 		"POST /llm-providers/{id}/api-keys":                         {"admin", "consumer"},
 		"GET /llm-providers/{id}/api-keys":                          {"admin", "consumer"},
